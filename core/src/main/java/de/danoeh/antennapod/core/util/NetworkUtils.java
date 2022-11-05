@@ -5,10 +5,8 @@ import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.NetworkInfo;
-import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
 import android.os.Build;
-import androidx.core.net.ConnectivityManagerCompat;
 import android.text.TextUtils;
 import android.util.Log;
 
@@ -19,6 +17,8 @@ import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import de.danoeh.antennapod.core.service.download.DownloadService;
+import de.danoeh.antennapod.core.storage.DBTasks;
 import de.danoeh.antennapod.model.feed.FeedMedia;
 import de.danoeh.antennapod.core.preferences.UserPreferences;
 import de.danoeh.antennapod.core.service.download.AntennapodHttpClient;
@@ -97,7 +97,18 @@ public class NetworkUtils {
 
     private static boolean isNetworkMetered() {
         ConnectivityManager connManager = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
-        return ConnectivityManagerCompat.isActiveNetworkMetered(connManager);
+
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+            NetworkCapabilities capabilities = connManager.getNetworkCapabilities(
+                    connManager.getActiveNetwork());
+
+            if (capabilities != null
+                    && capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+                    && capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
+                return false;
+            }
+        }
+        return connManager.isActiveNetworkMetered();
     }
 
     private static boolean isNetworkCellular() {
@@ -132,18 +143,6 @@ public class NetworkUtils {
         WifiManager wm = (WifiManager) context.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
         List<String> selectedNetworks = Arrays.asList(UserPreferences.getAutodownloadSelectedNetworks());
         return selectedNetworks.contains(Integer.toString(wm.getConnectionInfo().getNetworkId()));
-    }
-
-    /**
-     * Returns the SSID of the wifi connection, or <code>null</code> if there is no wifi.
-     */
-    public static String getWifiSsid() {
-        WifiManager wifiManager = (WifiManager) context.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-        WifiInfo wifiInfo = wifiManager.getConnectionInfo();
-        if (wifiInfo != null) {
-            return wifiInfo.getSSID();
-        }
-        return null;
     }
 
     public static boolean wasDownloadBlocked(Throwable throwable) {
@@ -218,4 +217,16 @@ public class NetworkUtils {
                 .observeOn(AndroidSchedulers.mainThread());
     }
 
+    public static void networkChangedDetected() {
+        if (NetworkUtils.isAutoDownloadAllowed()) {
+            Log.d(TAG, "auto-dl network available, starting auto-download");
+            DBTasks.autodownloadUndownloadedItems(context);
+        } else { // if new network is Wi-Fi, finish ongoing downloads,
+            // otherwise cancel all downloads
+            if (NetworkUtils.isNetworkRestricted()) {
+                Log.i(TAG, "Device is no longer connected to Wi-Fi. Cancelling ongoing downloads");
+                DownloadService.cancelAll(context);
+            }
+        }
+    }
 }

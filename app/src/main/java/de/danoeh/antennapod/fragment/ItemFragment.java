@@ -15,9 +15,6 @@ import android.widget.ImageView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import androidx.annotation.Nullable;
-import androidx.core.text.TextUtilsCompat;
-import androidx.core.util.ObjectsCompat;
-import androidx.core.view.ViewCompat;
 import androidx.fragment.app.Fragment;
 import com.bumptech.glide.Glide;
 import com.bumptech.glide.load.resource.bitmap.FitCenter;
@@ -25,6 +22,7 @@ import com.bumptech.glide.load.resource.bitmap.RoundedCorners;
 import com.bumptech.glide.request.RequestOptions;
 import com.google.android.material.snackbar.Snackbar;
 import com.skydoves.balloon.ArrowOrientation;
+import com.skydoves.balloon.ArrowOrientationRules;
 import com.skydoves.balloon.Balloon;
 import com.skydoves.balloon.BalloonAnimation;
 import de.danoeh.antennapod.R;
@@ -41,6 +39,8 @@ import de.danoeh.antennapod.adapter.actionbutton.StreamActionButton;
 import de.danoeh.antennapod.adapter.actionbutton.VisitWebsiteActionButton;
 import de.danoeh.antennapod.core.event.DownloadEvent;
 import de.danoeh.antennapod.core.event.DownloaderUpdate;
+import de.danoeh.antennapod.core.service.download.DownloadRequest;
+import de.danoeh.antennapod.core.service.download.DownloadService;
 import de.danoeh.antennapod.event.FeedItemEvent;
 import de.danoeh.antennapod.event.PlayerStatusEvent;
 import de.danoeh.antennapod.event.UnreadItemsUpdateEvent;
@@ -52,13 +52,13 @@ import de.danoeh.antennapod.core.preferences.UsageStatistics;
 import de.danoeh.antennapod.core.preferences.UserPreferences;
 import de.danoeh.antennapod.core.service.download.Downloader;
 import de.danoeh.antennapod.core.storage.DBReader;
-import de.danoeh.antennapod.core.storage.DownloadRequester;
 import de.danoeh.antennapod.core.util.Converter;
 import de.danoeh.antennapod.core.util.DateFormatter;
 import de.danoeh.antennapod.core.util.FeedItemUtil;
+import de.danoeh.antennapod.ui.common.CircularProgressBar;
 import de.danoeh.antennapod.ui.common.ThemeUtils;
 import de.danoeh.antennapod.core.util.playback.PlaybackController;
-import de.danoeh.antennapod.core.util.playback.Timeline;
+import de.danoeh.antennapod.core.util.gui.ShownotesCleaner;
 import de.danoeh.antennapod.view.ShownotesWebView;
 import io.reactivex.Observable;
 import io.reactivex.android.schedulers.AndroidSchedulers;
@@ -71,6 +71,7 @@ import org.greenrobot.eventbus.ThreadMode;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 
 /**
  * Displays information about a FeedItem and actions.
@@ -107,7 +108,7 @@ public class ItemFragment extends Fragment {
     private TextView txtvDuration;
     private TextView txtvPublished;
     private ImageView imgvCover;
-    private ProgressBar progbarDownload;
+    private CircularProgressBar progbarDownload;
     private ProgressBar progbarLoading;
     private TextView butAction1Text;
     private TextView butAction2Text;
@@ -148,7 +149,7 @@ public class ItemFragment extends Fragment {
         webvDescription = layout.findViewById(R.id.webvDescription);
         webvDescription.setTimecodeSelectedListener(time -> {
             if (controller != null && item.getMedia() != null && controller.getMedia() != null
-                    && ObjectsCompat.equals(item.getMedia().getIdentifier(), controller.getMedia().getIdentifier())) {
+                    && Objects.equals(item.getMedia().getIdentifier(), controller.getMedia().getIdentifier())) {
                 controller.seekTo(time);
             } else {
                 ((MainActivity) getActivity()).showSnackbarAbovePlayer(R.string.play_this_to_seek_position,
@@ -159,7 +160,7 @@ public class ItemFragment extends Fragment {
 
         imgvCover = layout.findViewById(R.id.imgvCover);
         imgvCover.setOnClickListener(v -> openPodcast());
-        progbarDownload = layout.findViewById(R.id.progbarDownload);
+        progbarDownload = layout.findViewById(R.id.circularProgressBar);
         progbarLoading = layout.findViewById(R.id.progbarLoading);
         butAction1 = layout.findViewById(R.id.butAction1);
         butAction2 = layout.findViewById(R.id.butAction2);
@@ -174,6 +175,8 @@ public class ItemFragment extends Fragment {
                     && UsageStatistics.hasSignificantBiasTo(UsageStatistics.ACTION_STREAM)) {
                 showOnDemandConfigBalloon(true);
                 return;
+            } else if (actionButton1 == null) {
+                return; // Not loaded yet
             }
             actionButton1.onClick(getContext());
         });
@@ -182,6 +185,8 @@ public class ItemFragment extends Fragment {
                     && UsageStatistics.hasSignificantBiasTo(UsageStatistics.ACTION_DOWNLOAD)) {
                 showOnDemandConfigBalloon(false);
                 return;
+            } else if (actionButton2 == null) {
+                return; // Not loaded yet
             }
             actionButton2.onClick(getContext());
         });
@@ -189,22 +194,24 @@ public class ItemFragment extends Fragment {
     }
 
     private void showOnDemandConfigBalloon(boolean offerStreaming) {
-        boolean isLocaleRtl = TextUtilsCompat.getLayoutDirectionFromLocale(Locale.getDefault())
-                == ViewCompat.LAYOUT_DIRECTION_RTL;
-        Balloon balloon = new Balloon.Builder(getContext())
+        final boolean isLocaleRtl = TextUtils.getLayoutDirectionFromLocale(Locale.getDefault())
+                == View.LAYOUT_DIRECTION_RTL;
+        final Balloon balloon = new Balloon.Builder(getContext())
                 .setArrowOrientation(ArrowOrientation.TOP)
+                .setArrowOrientationRules(ArrowOrientationRules.ALIGN_FIXED)
                 .setArrowPosition(0.25f + ((isLocaleRtl ^ offerStreaming) ? 0f : 0.5f))
                 .setWidthRatio(1.0f)
-                .isRtlSupport(true)
+                .setMarginLeft(8)
+                .setMarginRight(8)
                 .setBackgroundColor(ThemeUtils.getColorFromAttr(getContext(), R.attr.colorSecondary))
                 .setBalloonAnimation(BalloonAnimation.OVERSHOOT)
                 .setLayout(R.layout.popup_bubble_view)
                 .setDismissWhenTouchOutside(true)
                 .setLifecycleOwner(this)
                 .build();
-        Button positiveButton = balloon.getContentView().findViewById(R.id.balloon_button_positive);
-        Button negativeButton = balloon.getContentView().findViewById(R.id.balloon_button_negative);
-        TextView message = balloon.getContentView().findViewById(R.id.balloon_message);
+        final Button positiveButton = balloon.getContentView().findViewById(R.id.balloon_button_positive);
+        final Button negativeButton = balloon.getContentView().findViewById(R.id.balloon_button_negative);
+        final TextView message = balloon.getContentView().findViewById(R.id.balloon_message);
         message.setText(offerStreaming
                 ? R.string.on_demand_config_stream_text : R.string.on_demand_config_download_text);
         positiveButton.setOnClickListener(v1 -> {
@@ -216,7 +223,7 @@ public class ItemFragment extends Fragment {
             balloon.dismiss();
         });
         negativeButton.setOnClickListener(v1 -> {
-            UsageStatistics.askAgainLater(UsageStatistics.ACTION_STREAM); // Type does not matter. Both are silenced.
+            UsageStatistics.doNotAskAgain(UsageStatistics.ACTION_STREAM); // Type does not matter. Both are silenced.
             balloon.dismiss();
         });
         balloon.showAlignBottom(butAction1, 0, (int) (-12 * getResources().getDisplayMetrics().density));
@@ -265,7 +272,7 @@ public class ItemFragment extends Fragment {
     }
 
     private void onFragmentLoaded() {
-        if (webviewData != null) {
+        if (webviewData != null && !itemsLoaded) {
             webvDescription.loadDataWithBaseURL("https://127.0.0.1", webviewData, "text/html", "utf-8", "about:blank");
         }
         updateAppearance();
@@ -282,14 +289,14 @@ public class ItemFragment extends Fragment {
         if (item.getPubDate() != null) {
             String pubDateStr = DateFormatter.formatAbbrev(getActivity(), item.getPubDate());
             txtvPublished.setText(pubDateStr);
-            txtvPublished.setContentDescription(DateFormatter.formatForAccessibility(getContext(), item.getPubDate()));
+            txtvPublished.setContentDescription(DateFormatter.formatForAccessibility(item.getPubDate()));
         }
 
         RequestOptions options = new RequestOptions()
                 .error(R.color.light_gray)
                 .diskCacheStrategy(ApGlideSettings.AP_DISK_CACHE_STRATEGY)
-                .transforms(new FitCenter(),
-                        new RoundedCorners((int) (4 * getResources().getDisplayMetrics().density)))
+                .transform(new FitCenter(),
+                        new RoundedCorners((int) (8 * getResources().getDisplayMetrics().density)))
                 .dontAnimate();
 
         Glide.with(getActivity())
@@ -306,10 +313,11 @@ public class ItemFragment extends Fragment {
         progbarDownload.setVisibility(View.GONE);
         if (item.hasMedia() && downloaderList != null) {
             for (Downloader downloader : downloaderList) {
-                if (downloader.getDownloadRequest().getFeedfileType() == FeedMedia.FEEDFILETYPE_FEEDMEDIA
-                        && downloader.getDownloadRequest().getFeedfileId() == item.getMedia().getId()) {
+                DownloadRequest request = downloader.getDownloadRequest();
+                if (request.getFeedfileType() == FeedMedia.FEEDFILETYPE_FEEDMEDIA
+                        && request.getFeedfileId() == item.getMedia().getId()) {
                     progbarDownload.setVisibility(View.VISIBLE);
-                    progbarDownload.setProgress(downloader.getDownloadRequest().getProgressPercent());
+                    progbarDownload.setPercentage(0.01f * Math.max(1, request.getProgressPercent()), request);
                 }
             }
         }
@@ -335,7 +343,7 @@ public class ItemFragment extends Fragment {
             } else {
                 actionButton1 = new StreamActionButton(item);
             }
-            if (DownloadRequester.getInstance().isDownloadingFile(media)) {
+            if (DownloadService.isDownloadingFile(media.getDownload_url())) {
                 actionButton2 = new CancelDownloadActionButton(item);
             } else if (!media.isDownloaded()) {
                 actionButton2 = new DownloadActionButton(item);
@@ -361,6 +369,9 @@ public class ItemFragment extends Fragment {
     }
 
     private void openPodcast() {
+        if (item == null) {
+            return;
+        }
         Fragment fragment = FeedItemlistFragment.newInstance(item.getFeedId());
         ((MainActivity) getActivity()).loadChildFragment(fragment);
     }
@@ -415,8 +426,8 @@ public class ItemFragment extends Fragment {
             .subscribe(result -> {
                 progbarLoading.setVisibility(View.GONE);
                 item = result;
-                itemsLoaded = true;
                 onFragmentLoaded();
+                itemsLoaded = true;
             }, error -> Log.e(TAG, Log.getStackTraceString(error)));
     }
 
@@ -427,7 +438,7 @@ public class ItemFragment extends Fragment {
         if (feedItem != null && context != null) {
             int duration = feedItem.getMedia() != null ? feedItem.getMedia().getDuration() : Integer.MAX_VALUE;
             DBReader.loadDescriptionOfFeedItem(feedItem);
-            Timeline t = new Timeline(context, feedItem.getDescription(), duration);
+            ShownotesCleaner t = new ShownotesCleaner(context, feedItem.getDescription(), duration);
             webviewData = t.processShownotes();
         }
         return feedItem;

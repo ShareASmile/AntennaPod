@@ -13,11 +13,9 @@ import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ProgressBar;
-
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
-import androidx.appcompat.app.AlertDialog;
 import androidx.core.util.Pair;
 import androidx.fragment.app.Fragment;
 import androidx.recyclerview.widget.LinearLayoutManager;
@@ -28,18 +26,21 @@ import de.danoeh.antennapod.activity.MainActivity;
 import de.danoeh.antennapod.activity.PreferenceActivity;
 import de.danoeh.antennapod.adapter.NavListAdapter;
 import de.danoeh.antennapod.core.dialog.ConfirmationDialog;
-import de.danoeh.antennapod.event.FeedListUpdateEvent;
-import de.danoeh.antennapod.event.QueueEvent;
-import de.danoeh.antennapod.event.UnreadItemsUpdateEvent;
-import de.danoeh.antennapod.dialog.TagSettingsDialog;
-import de.danoeh.antennapod.model.feed.Feed;
+import de.danoeh.antennapod.core.menuhandler.MenuItemUtils;
 import de.danoeh.antennapod.core.preferences.UserPreferences;
 import de.danoeh.antennapod.core.storage.DBReader;
 import de.danoeh.antennapod.core.storage.DBWriter;
 import de.danoeh.antennapod.core.storage.NavDrawerData;
+import de.danoeh.antennapod.dialog.DrawerPreferencesDialog;
 import de.danoeh.antennapod.dialog.RemoveFeedDialog;
+import de.danoeh.antennapod.dialog.RenameItemDialog;
 import de.danoeh.antennapod.dialog.SubscriptionsFilterDialog;
-import de.danoeh.antennapod.dialog.RenameFeedDialog;
+import de.danoeh.antennapod.dialog.TagSettingsDialog;
+import de.danoeh.antennapod.event.FeedListUpdateEvent;
+import de.danoeh.antennapod.event.QueueEvent;
+import de.danoeh.antennapod.event.UnreadItemsUpdateEvent;
+import de.danoeh.antennapod.model.feed.Feed;
+import de.danoeh.antennapod.ui.home.HomeFragment;
 import io.reactivex.Observable;
 import io.reactivex.android.schedulers.AndroidSchedulers;
 import io.reactivex.disposables.Disposable;
@@ -50,6 +51,7 @@ import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -63,10 +65,12 @@ public class NavDrawerFragment extends Fragment implements SharedPreferences.OnS
     public static final String TAG = "NavDrawerFragment";
 
     public static final String[] NAV_DRAWER_TAGS = {
+            HomeFragment.TAG,
             QueueFragment.TAG,
-            EpisodesFragment.TAG,
+            InboxFragment.TAG,
+            AllEpisodesFragment.TAG,
             SubscriptionFragment.TAG,
-            DownloadsFragment.TAG,
+            CompletedDownloadsFragment.TAG,
             PlaybackHistoryFragment.TAG,
             AddFeedFragment.TAG,
             NavListAdapter.SUBSCRIPTION_LIST_TAG
@@ -123,32 +127,37 @@ public class NavDrawerFragment extends Fragment implements SharedPreferences.OnS
     @Override
     public void onCreateContextMenu(@NonNull ContextMenu menu, @NonNull View v, ContextMenu.ContextMenuInfo menuInfo) {
         super.onCreateContextMenu(menu, v, menuInfo);
-        if (contextPressedItem.type != NavDrawerData.DrawerItem.Type.FEED) {
-            return; // Should actually never happen because the context menu is not set up for other items
-        }
-
         MenuInflater inflater = getActivity().getMenuInflater();
-        inflater.inflate(R.menu.nav_feed_context, menu);
-        menu.setHeaderTitle(((NavDrawerData.FeedDrawerItem) contextPressedItem).feed.getTitle());
-        // episodes are not loaded, so we cannot check if the podcast has new or unplayed ones!
+        menu.setHeaderTitle(contextPressedItem.getTitle());
+        if (contextPressedItem.type == NavDrawerData.DrawerItem.Type.FEED) {
+            inflater.inflate(R.menu.nav_feed_context, menu);
+            // episodes are not loaded, so we cannot check if the podcast has new or unplayed ones!
+        } else {
+            inflater.inflate(R.menu.nav_folder_context, menu);
+        }
+        MenuItemUtils.setOnClickListeners(menu, this::onContextItemSelected);
     }
 
     @Override
     public boolean onContextItemSelected(@NonNull MenuItem item) {
         NavDrawerData.DrawerItem pressedItem = contextPressedItem;
         contextPressedItem = null;
-        if (pressedItem != null && pressedItem.type == NavDrawerData.DrawerItem.Type.FEED) {
-            return onFeedContextMenuClicked(((NavDrawerData.FeedDrawerItem) pressedItem).feed, item);
+        if (pressedItem == null) {
+            return false;
         }
-        return false;
+        if (pressedItem.type == NavDrawerData.DrawerItem.Type.FEED) {
+            return onFeedContextMenuClicked(((NavDrawerData.FeedDrawerItem) pressedItem).feed, item);
+        } else {
+            return onTagContextMenuClicked(pressedItem, item);
+        }
     }
 
     private boolean onFeedContextMenuClicked(Feed feed, MenuItem item) {
         final int itemId = item.getItemId();
-        if (itemId == R.id.remove_all_new_flags_item) {
+        if (itemId == R.id.remove_all_inbox_item) {
             ConfirmationDialog removeAllNewFlagsConfirmationDialog = new ConfirmationDialog(getContext(),
-                    R.string.remove_all_new_flags_label,
-                    R.string.remove_all_new_flags_confirmation_msg) {
+                    R.string.remove_all_inbox_label,
+                    R.string.remove_all_inbox_confirmation_msg) {
                 @Override
                 public void onConfirmButtonPressed(DialogInterface dialog) {
                     dialog.dismiss();
@@ -158,14 +167,24 @@ public class NavDrawerFragment extends Fragment implements SharedPreferences.OnS
             removeAllNewFlagsConfirmationDialog.createNewDialog().show();
             return true;
         } else if (itemId == R.id.edit_tags) {
-            TagSettingsDialog.newInstance(feed.getPreferences()).show(getChildFragmentManager(), TagSettingsDialog.TAG);
+            TagSettingsDialog.newInstance(Collections.singletonList(feed.getPreferences()))
+                    .show(getChildFragmentManager(), TagSettingsDialog.TAG);
             return true;
         } else if (itemId == R.id.rename_item) {
-            new RenameFeedDialog(getActivity(), feed).show();
+            new RenameItemDialog(getActivity(), feed).show();
             return true;
-        } else if (itemId == R.id.remove_item) {
-            ((MainActivity) getActivity()).loadFragment(EpisodesFragment.TAG, null);
+        } else if (itemId == R.id.remove_feed) {
+            ((MainActivity) getActivity()).loadFragment(AllEpisodesFragment.TAG, null);
             RemoveFeedDialog.show(getContext(), feed);
+            return true;
+        }
+        return super.onContextItemSelected(item);
+    }
+
+    private boolean onTagContextMenuClicked(NavDrawerData.DrawerItem drawerItem, MenuItem item) {
+        final int itemId = item.getItemId();
+        if (itemId == R.id.rename_folder_item) {
+            new RenameItemDialog(getActivity(), drawerItem).show();
             return true;
         }
         return super.onContextItemSelected(item);
@@ -198,35 +217,6 @@ public class NavDrawerFragment extends Fragment implements SharedPreferences.OnS
     public void onResume() {
         super.onResume();
         loadData();
-    }
-
-    private void showDrawerPreferencesDialog() {
-        final List<String> hiddenDrawerItems = UserPreferences.getHiddenDrawerItems();
-        String[] navLabels = new String[NAV_DRAWER_TAGS.length];
-        final boolean[] checked = new boolean[NAV_DRAWER_TAGS.length];
-        for (int i = 0; i < NAV_DRAWER_TAGS.length; i++) {
-            String tag = NAV_DRAWER_TAGS[i];
-            navLabels[i] = navAdapter.getLabel(tag);
-            if (!hiddenDrawerItems.contains(tag)) {
-                checked[i] = true;
-            }
-        }
-
-        AlertDialog.Builder builder = new AlertDialog.Builder(getContext());
-        builder.setTitle(R.string.drawer_preferences);
-        builder.setMultiChoiceItems(navLabels, checked, (dialog, which, isChecked) -> {
-            if (isChecked) {
-                hiddenDrawerItems.remove(NAV_DRAWER_TAGS[which]);
-            } else {
-                hiddenDrawerItems.add(NAV_DRAWER_TAGS[which]);
-            }
-        });
-        builder.setPositiveButton(R.string.confirm_label, (dialog, which) -> {
-            UserPreferences.setHiddenDrawerItems(hiddenDrawerItems);
-            navAdapter.notifyDataSetChanged(); // Update selection
-        });
-        builder.setNegativeButton(R.string.cancel_label, null);
-        builder.create().show();
     }
 
     private final NavListAdapter.ItemAccess itemAccess = new NavListAdapter.ItemAccess() {
@@ -348,7 +338,7 @@ public class NavDrawerFragment extends Fragment implements SharedPreferences.OnS
         @Override
         public boolean onItemLongClick(int position) {
             if (position < navAdapter.getFragmentTags().size()) {
-                showDrawerPreferencesDialog();
+                DrawerPreferencesDialog.show(getContext(), () -> navAdapter.notifyDataSetChanged());
                 return true;
             } else {
                 contextPressedItem = flatItemList.get(position - navAdapter.getSubscriptionOffset());
@@ -412,7 +402,7 @@ public class NavDrawerFragment extends Fragment implements SharedPreferences.OnS
 
     public static String getLastNavFragment(Context context) {
         SharedPreferences prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
-        String lastFragment = prefs.getString(PREF_LAST_FRAGMENT_TAG, QueueFragment.TAG);
+        String lastFragment = prefs.getString(PREF_LAST_FRAGMENT_TAG, HomeFragment.TAG);
         Log.d(TAG, "getLastNavFragment() -> " + lastFragment);
         return lastFragment;
     }

@@ -3,6 +3,7 @@ package de.danoeh.antennapod.menuhandler;
 import android.content.Context;
 import android.os.Handler;
 import android.util.Log;
+import android.view.KeyEvent;
 import android.view.Menu;
 import android.view.MenuItem;
 
@@ -15,6 +16,7 @@ import de.danoeh.antennapod.R;
 import de.danoeh.antennapod.activity.MainActivity;
 import de.danoeh.antennapod.core.preferences.PlaybackPreferences;
 import de.danoeh.antennapod.core.preferences.UserPreferences;
+import de.danoeh.antennapod.core.receiver.MediaButtonReceiver;
 import de.danoeh.antennapod.core.service.playback.PlaybackService;
 import de.danoeh.antennapod.core.storage.DBWriter;
 import de.danoeh.antennapod.core.sync.SynchronizationSettings;
@@ -61,7 +63,7 @@ public class FeedItemMenuHandler {
         setItemVisibility(menu, R.id.visit_website_item, !selectedItem.getFeed().isLocalFeed()
                 && ShareUtils.hasLinkToShare(selectedItem));
         setItemVisibility(menu, R.id.share_item, !selectedItem.getFeed().isLocalFeed());
-        setItemVisibility(menu, R.id.remove_new_flag_item, selectedItem.isNew());
+        setItemVisibility(menu, R.id.remove_inbox_item, selectedItem.isNew());
         setItemVisibility(menu, R.id.mark_read_item, !selectedItem.isPlayed());
         setItemVisibility(menu, R.id.mark_unread_item, selectedItem.isPlayed());
         setItemVisibility(menu, R.id.reset_position, hasMedia && selectedItem.getMedia().getPosition() != 0);
@@ -120,7 +122,7 @@ public class FeedItemMenuHandler {
      * @return true if selectedItem is not null.
      */
     public static boolean onPrepareMenu(Menu menu, FeedItem selectedItem, int... excludeIds) {
-        if (menu == null || selectedItem == null ) {
+        if (menu == null || selectedItem == null) {
             return false;
         }
         boolean rc = onPrepareMenu(menu, selectedItem);
@@ -143,10 +145,10 @@ public class FeedItemMenuHandler {
 
         @NonNull Context context = fragment.requireContext();
         if (menuItemId == R.id.skip_episode_item) {
-            IntentUtils.sendLocalBroadcast(context, PlaybackService.ACTION_SKIP_CURRENT_EPISODE);
+            context.sendBroadcast(MediaButtonReceiver.createIntent(context, KeyEvent.KEYCODE_MEDIA_NEXT));
         } else if (menuItemId == R.id.remove_item) {
             DBWriter.deleteFeedMediaOfItem(context, selectedItem.getMedia().getId());
-        } else if (menuItemId == R.id.remove_new_flag_item) {
+        } else if (menuItemId == R.id.remove_inbox_item) {
             removeNewFlagWithUndo(fragment, selectedItem);
         } else if (menuItemId == R.id.mark_read_item) {
             selectedItem.setPlayed(true);
@@ -233,7 +235,7 @@ public class FeedItemMenuHandler {
             case FeedItem.UNPLAYED:
                 if (item.getPlayState() == FeedItem.NEW) {
                     //was new
-                    playStateStringRes = R.string.removed_new_flag_label;
+                    playStateStringRes = R.string.removed_inbox_label;
                 } else {
                     //was played
                     playStateStringRes = R.string.marked_as_unplayed_label;

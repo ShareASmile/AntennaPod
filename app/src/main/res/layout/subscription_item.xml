@@ -33,7 +33,7 @@
         android:textColor="?android:attr/textColorPrimary"
         tools:text="@string/app_name" />
 
-    <jp.shts.android.library.TriangleLabelView
+    <de.danoeh.antennapod.ui.common.TriangleLabelView
         android:id="@+id/triangleCountView"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
@@ -49,8 +49,7 @@
     <FrameLayout
         android:id="@+id/selectView"
         android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:background="@drawable/ic_checkbox_background">
+        android:layout_height="wrap_content">
 
         <CheckBox
             android:id="@+id/selectCheckBox"

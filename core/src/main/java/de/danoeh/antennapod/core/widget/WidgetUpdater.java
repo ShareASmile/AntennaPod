@@ -4,10 +4,8 @@ import android.app.PendingIntent;
 import android.appwidget.AppWidgetManager;
 import android.content.ComponentName;
 import android.content.Context;
-import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
-import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.KeyEvent;
@@ -25,12 +23,13 @@ import de.danoeh.antennapod.model.playback.MediaType;
 import de.danoeh.antennapod.core.glide.ApGlideSettings;
 import de.danoeh.antennapod.core.receiver.MediaButtonReceiver;
 import de.danoeh.antennapod.core.receiver.PlayerWidget;
-import de.danoeh.antennapod.core.service.playback.PlayerStatus;
 import de.danoeh.antennapod.core.util.Converter;
 import de.danoeh.antennapod.core.feed.util.ImageResourceUtils;
 import de.danoeh.antennapod.core.util.TimeSpeedConverter;
 import de.danoeh.antennapod.model.playback.Playable;
+import de.danoeh.antennapod.playback.base.PlayerStatus;
 import de.danoeh.antennapod.ui.appstartintent.MainActivityStarter;
+import de.danoeh.antennapod.ui.appstartintent.PlaybackSpeedActivityStarter;
 import de.danoeh.antennapod.ui.appstartintent.VideoPlayerActivityStarter;
 
 /**
@@ -45,20 +44,17 @@ public abstract class WidgetUpdater {
         final int position;
         final int duration;
         final float playbackSpeed;
-        final boolean isCasting;
 
-        public WidgetState(Playable media, PlayerStatus status, int position, int duration,
-                           float playbackSpeed, boolean isCasting) {
+        public WidgetState(Playable media, PlayerStatus status, int position, int duration, float playbackSpeed) {
             this.media = media;
             this.status = status;
             this.position = position;
             this.duration = duration;
             this.playbackSpeed = playbackSpeed;
-            this.isCasting = isCasting;
         }
 
         public WidgetState(PlayerStatus status) {
-            this(null, status, Playable.INVALID_TIME, Playable.INVALID_TIME, 1.0f, false);
+            this(null, status, Playable.INVALID_TIME, Playable.INVALID_TIME, 1.0f);
         }
     }
 
@@ -69,17 +65,16 @@ public abstract class WidgetUpdater {
         if (!PlayerWidget.isEnabled(context) || widgetState == null) {
             return;
         }
-        ComponentName playerWidget = new ComponentName(context, PlayerWidget.class);
-        AppWidgetManager manager = AppWidgetManager.getInstance(context);
-        int[] widgetIds = manager.getAppWidgetIds(playerWidget);
 
         PendingIntent startMediaPlayer;
-        if (widgetState.media != null && widgetState.media.getMediaType() == MediaType.VIDEO
-                && !widgetState.isCasting) {
+        if (widgetState.media != null && widgetState.media.getMediaType() == MediaType.VIDEO) {
             startMediaPlayer = new VideoPlayerActivityStarter(context).getPendingIntent();
         } else {
             startMediaPlayer = new MainActivityStarter(context).withOpenPlayer().getPendingIntent();
         }
+
+        PendingIntent startPlaybackSpeedDialog = new PlaybackSpeedActivityStarter(context).getPendingIntent();
+
         RemoteViews views;
         views = new RemoteViews(context.getPackageName(), R.layout.player_widget);
 
@@ -88,6 +83,7 @@ public abstract class WidgetUpdater {
             int iconSize = context.getResources().getDimensionPixelSize(android.R.dimen.app_icon_size);
             views.setOnClickPendingIntent(R.id.layout_left, startMediaPlayer);
             views.setOnClickPendingIntent(R.id.imgvCover, startMediaPlayer);
+            views.setOnClickPendingIntent(R.id.butPlaybackSpeed, startPlaybackSpeedDialog);
 
             try {
                 icon = Glide.with(context)
@@ -108,7 +104,7 @@ public abstract class WidgetUpdater {
                     views.setImageViewBitmap(R.id.imgvCover, icon);
                 } catch (Throwable tr2) {
                     Log.e(TAG, "Error loading the media icon for the widget", tr2);
-                    views.setImageViewResource(R.id.imgvCover, R.mipmap.ic_launcher_round);
+                    views.setImageViewResource(R.id.imgvCover, R.mipmap.ic_launcher);
                 }
             }
 
@@ -135,59 +131,61 @@ public abstract class WidgetUpdater {
                 views.setContentDescription(R.id.butPlayExtended, context.getString(R.string.play_label));
             }
             views.setOnClickPendingIntent(R.id.butPlay,
-                    createMediaButtonIntent(context, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE));
+                    MediaButtonReceiver.createPendingIntent(context, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE));
             views.setOnClickPendingIntent(R.id.butPlayExtended,
-                    createMediaButtonIntent(context, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE));
+                    MediaButtonReceiver.createPendingIntent(context, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE));
             views.setOnClickPendingIntent(R.id.butRew,
-                    createMediaButtonIntent(context, KeyEvent.KEYCODE_MEDIA_REWIND));
+                    MediaButtonReceiver.createPendingIntent(context, KeyEvent.KEYCODE_MEDIA_REWIND));
             views.setOnClickPendingIntent(R.id.butFastForward,
-                    createMediaButtonIntent(context, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD));
+                    MediaButtonReceiver.createPendingIntent(context, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD));
             views.setOnClickPendingIntent(R.id.butSkip,
-                    createMediaButtonIntent(context, KeyEvent.KEYCODE_MEDIA_NEXT));
+                    MediaButtonReceiver.createPendingIntent(context, KeyEvent.KEYCODE_MEDIA_NEXT));
         } else {
             // start the app if they click anything
             views.setOnClickPendingIntent(R.id.layout_left, startMediaPlayer);
             views.setOnClickPendingIntent(R.id.butPlay, startMediaPlayer);
             views.setOnClickPendingIntent(R.id.butPlayExtended,
-                    createMediaButtonIntent(context, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE));
+                    MediaButtonReceiver.createPendingIntent(context, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE));
             views.setViewVisibility(R.id.txtvProgress, View.GONE);
             views.setViewVisibility(R.id.txtvTitle, View.GONE);
             views.setViewVisibility(R.id.txtNoPlaying, View.VISIBLE);
-            views.setImageViewResource(R.id.imgvCover, R.mipmap.ic_launcher_round);
+            views.setImageViewResource(R.id.imgvCover, R.mipmap.ic_launcher);
             views.setImageViewResource(R.id.butPlay, R.drawable.ic_widget_play);
             views.setImageViewResource(R.id.butPlayExtended, R.drawable.ic_widget_play);
         }
 
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.JELLY_BEAN) {
-            for (int id : widgetIds) {
-                Bundle options = manager.getAppWidgetOptions(id);
-                SharedPreferences prefs = context.getSharedPreferences(PlayerWidget.PREFS_NAME, Context.MODE_PRIVATE);
-                int minWidth = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH);
-                int columns = getCellsForSize(minWidth);
-                if (columns < 3) {
-                    views.setViewVisibility(R.id.layout_center, View.INVISIBLE);
-                } else {
-                    views.setViewVisibility(R.id.layout_center, View.VISIBLE);
-                }
-                boolean showRewind = prefs.getBoolean(PlayerWidget.KEY_WIDGET_REWIND + id, false);
-                boolean showFastForward = prefs.getBoolean(PlayerWidget.KEY_WIDGET_FAST_FORWARD + id, false);
-                boolean showSkip = prefs.getBoolean(PlayerWidget.KEY_WIDGET_SKIP + id, false);
+        ComponentName playerWidget = new ComponentName(context, PlayerWidget.class);
+        AppWidgetManager manager = AppWidgetManager.getInstance(context);
+        int[] widgetIds = manager.getAppWidgetIds(playerWidget);
 
-                if (showRewind || showSkip || showFastForward) {
-                    views.setInt(R.id.extendedButtonsContainer, "setVisibility", View.VISIBLE);
-                    views.setInt(R.id.butPlay, "setVisibility", View.GONE);
-                    views.setInt(R.id.butRew, "setVisibility", showRewind ? View.VISIBLE : View.GONE);
-                    views.setInt(R.id.butFastForward, "setVisibility", showFastForward ? View.VISIBLE : View.GONE);
-                    views.setInt(R.id.butSkip, "setVisibility", showSkip ? View.VISIBLE : View.GONE);
-                }
-
-                int backgroundColor = prefs.getInt(PlayerWidget.KEY_WIDGET_COLOR + id, PlayerWidget.DEFAULT_COLOR);
-                views.setInt(R.id.widgetLayout, "setBackgroundColor", backgroundColor);
-
-                manager.updateAppWidget(id, views);
+        for (int id : widgetIds) {
+            Bundle options = manager.getAppWidgetOptions(id);
+            SharedPreferences prefs = context.getSharedPreferences(PlayerWidget.PREFS_NAME, Context.MODE_PRIVATE);
+            int minWidth = options.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH);
+            int columns = getCellsForSize(minWidth);
+            if (columns < 3) {
+                views.setViewVisibility(R.id.layout_center, View.INVISIBLE);
+            } else {
+                views.setViewVisibility(R.id.layout_center, View.VISIBLE);
             }
-        } else {
-            manager.updateAppWidget(playerWidget, views);
+            boolean showPlaybackSpeed = prefs.getBoolean(PlayerWidget.KEY_WIDGET_PLAYBACK_SPEED + id, false);
+            boolean showRewind = prefs.getBoolean(PlayerWidget.KEY_WIDGET_REWIND + id, false);
+            boolean showFastForward = prefs.getBoolean(PlayerWidget.KEY_WIDGET_FAST_FORWARD + id, false);
+            boolean showSkip = prefs.getBoolean(PlayerWidget.KEY_WIDGET_SKIP + id, false);
+
+            if (showPlaybackSpeed || showRewind || showSkip || showFastForward) {
+                views.setInt(R.id.extendedButtonsContainer, "setVisibility", View.VISIBLE);
+                views.setInt(R.id.butPlay, "setVisibility", View.GONE);
+                views.setInt(R.id.butPlaybackSpeed, "setVisibility", showPlaybackSpeed ? View.VISIBLE : View.GONE);
+                views.setInt(R.id.butRew, "setVisibility", showRewind ? View.VISIBLE : View.GONE);
+                views.setInt(R.id.butFastForward, "setVisibility", showFastForward ? View.VISIBLE : View.GONE);
+                views.setInt(R.id.butSkip, "setVisibility", showSkip ? View.VISIBLE : View.GONE);
+            }
+
+            int backgroundColor = prefs.getInt(PlayerWidget.KEY_WIDGET_COLOR + id, PlayerWidget.DEFAULT_COLOR);
+            views.setInt(R.id.widgetLayout, "setBackgroundColor", backgroundColor);
+
+            manager.updateAppWidget(id, views);
         }
     }
 
@@ -203,19 +201,6 @@ public abstract class WidgetUpdater {
             ++n;
         }
         return n - 1;
-    }
-
-    /**
-     * Creates an intent which fakes a mediabutton press.
-     */
-    private static PendingIntent createMediaButtonIntent(Context context, int eventCode) {
-        KeyEvent event = new KeyEvent(KeyEvent.ACTION_DOWN, eventCode);
-        Intent startingIntent = new Intent(context, MediaButtonReceiver.class);
-        startingIntent.setAction(MediaButtonReceiver.NOTIFY_BUTTON_RECEIVER);
-        startingIntent.putExtra(Intent.EXTRA_KEY_EVENT, event);
-
-        return PendingIntent.getBroadcast(context, eventCode, startingIntent,
-                (Build.VERSION.SDK_INT >= 23 ? PendingIntent.FLAG_IMMUTABLE : 0));
     }
 
     private static String getProgressString(int position, int duration, float speed) {

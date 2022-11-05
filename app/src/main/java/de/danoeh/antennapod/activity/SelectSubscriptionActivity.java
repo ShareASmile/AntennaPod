@@ -99,7 +99,7 @@ public class SelectSubscriptionActivity extends AppCompatActivity {
         if (bitmap != null) {
             icon = IconCompat.createWithAdaptiveBitmap(bitmap);
         } else {
-            icon = IconCompat.createWithResource(this, R.drawable.ic_folder_shortcut);
+            icon = IconCompat.createWithResource(this, R.drawable.ic_subscriptions_shortcut);
         }
 
         ShortcutInfoCompat shortcut = new ShortcutInfoCompat.Builder(this, id)
@@ -118,7 +118,7 @@ public class SelectSubscriptionActivity extends AppCompatActivity {
         Glide.with(this)
                 .asBitmap()
                 .load(feed.getImageUrl())
-                .apply(new RequestOptions().override(iconSize, iconSize))
+                .apply(RequestOptions.overrideOf(iconSize, iconSize))
                 .listener(new RequestListener<Bitmap>() {
                     @Override
                     public boolean onLoadFailed(@Nullable GlideException e, Object model,

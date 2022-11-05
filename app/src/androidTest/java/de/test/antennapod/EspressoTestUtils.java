@@ -18,6 +18,7 @@ import androidx.test.espresso.util.HumanReadables;
 import androidx.test.espresso.util.TreeIterables;
 import android.view.View;
 
+import de.danoeh.antennapod.storage.database.PodDBAdapter;
 import junit.framework.AssertionFailedError;
 
 import de.danoeh.antennapod.R;
@@ -25,7 +26,6 @@ import de.danoeh.antennapod.activity.MainActivity;
 import de.danoeh.antennapod.core.preferences.UserPreferences;
 import de.danoeh.antennapod.core.service.download.DownloadService;
 import de.danoeh.antennapod.core.service.playback.PlaybackService;
-import de.danoeh.antennapod.core.storage.PodDBAdapter;
 import de.danoeh.antennapod.dialog.RatingDialog;
 import de.danoeh.antennapod.fragment.NavDrawerFragment;
 import org.awaitility.Awaitility;
@@ -172,11 +172,15 @@ public class EspressoTestUtils {
         RatingDialog.saveRated();
     }
 
-    public static void setLastNavFragment(String tag) {
+    public static void setLaunchScreen(String tag) {
         InstrumentationRegistry.getInstrumentation().getTargetContext()
                 .getSharedPreferences(NavDrawerFragment.PREF_NAME, Context.MODE_PRIVATE)
                 .edit()
                 .putString(NavDrawerFragment.PREF_LAST_FRAGMENT_TAG, tag)
+                .commit();
+        PreferenceManager.getDefaultSharedPreferences(InstrumentationRegistry.getInstrumentation().getTargetContext())
+                .edit()
+                .putString(UserPreferences.PREF_DEFAULT_PAGE, UserPreferences.DEFAULT_PAGE_REMEMBER)
                 .commit();
     }
 

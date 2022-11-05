@@ -8,8 +8,7 @@ import android.view.ViewGroup;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import androidx.appcompat.widget.Toolbar;
-import androidx.core.view.ViewCompat;
+import com.google.android.material.appbar.MaterialToolbar;
 import androidx.fragment.app.Fragment;
 import androidx.viewpager2.adapter.FragmentStateAdapter;
 import androidx.viewpager2.widget.ViewPager2;
@@ -32,7 +31,7 @@ import io.reactivex.schedulers.Schedulers;
 /**
  * Displays information about a list of FeedItems.
  */
-public class ItemPagerFragment extends Fragment implements Toolbar.OnMenuItemClickListener {
+public class ItemPagerFragment extends Fragment implements MaterialToolbar.OnMenuItemClickListener {
     private static final String ARG_FEEDITEMS = "feeditems";
     private static final String ARG_FEEDITEM_POS = "feeditem_pos";
     private static final String KEY_PAGER_ID = "pager_id";
@@ -57,7 +56,7 @@ public class ItemPagerFragment extends Fragment implements Toolbar.OnMenuItemCli
     private long[] feedItems;
     private FeedItem item;
     private Disposable disposable;
-    private Toolbar toolbar;
+    private MaterialToolbar toolbar;
 
     @Override
     public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container,
@@ -78,7 +77,7 @@ public class ItemPagerFragment extends Fragment implements Toolbar.OnMenuItemCli
         // > When using FragmentStatePagerAdapter the host ViewPager must have a valid ID set.
         // When opening multiple ItemPagerFragments by clicking "item" -> "visit podcast" -> "item" -> etc,
         // the ID is no longer unique and FragmentStatePagerAdapter does not display any pages.
-        int newId = ViewCompat.generateViewId();
+        int newId = View.generateViewId();
         if (savedInstanceState != null && savedInstanceState.getInt(KEY_PAGER_ID, 0) != 0) {
             // Restore state by using the same ID as before. ID collisions are prevented in MainActivity.
             newId = savedInstanceState.getInt(KEY_PAGER_ID, 0);

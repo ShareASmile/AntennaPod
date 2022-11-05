@@ -7,7 +7,6 @@ import androidx.collection.ArrayMap;
 import android.text.TextUtils;
 import android.util.Log;
 
-import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -21,15 +20,16 @@ import de.danoeh.antennapod.model.feed.FeedItem;
 import de.danoeh.antennapod.model.feed.FeedItemFilter;
 import de.danoeh.antennapod.model.feed.FeedMedia;
 import de.danoeh.antennapod.model.feed.FeedPreferences;
-import de.danoeh.antennapod.core.feed.SubscriptionsFilter;
+import de.danoeh.antennapod.model.feed.SubscriptionsFilter;
 import de.danoeh.antennapod.core.preferences.UserPreferences;
-import de.danoeh.antennapod.core.service.download.DownloadStatus;
-import de.danoeh.antennapod.core.storage.mapper.ChapterCursorMapper;
-import de.danoeh.antennapod.core.storage.mapper.FeedCursorMapper;
-import de.danoeh.antennapod.core.storage.mapper.FeedItemCursorMapper;
-import de.danoeh.antennapod.core.storage.mapper.FeedMediaCursorMapper;
-import de.danoeh.antennapod.core.storage.mapper.FeedPreferencesCursorMapper;
-import de.danoeh.antennapod.core.util.LongIntMap;
+import de.danoeh.antennapod.model.download.DownloadStatus;
+import de.danoeh.antennapod.storage.database.PodDBAdapter;
+import de.danoeh.antennapod.storage.database.mapper.DownloadStatusCursorMapper;
+import de.danoeh.antennapod.storage.database.mapper.ChapterCursorMapper;
+import de.danoeh.antennapod.storage.database.mapper.FeedCursorMapper;
+import de.danoeh.antennapod.storage.database.mapper.FeedItemCursorMapper;
+import de.danoeh.antennapod.storage.database.mapper.FeedMediaCursorMapper;
+import de.danoeh.antennapod.storage.database.mapper.FeedPreferencesCursorMapper;
 import de.danoeh.antennapod.core.util.LongList;
 import de.danoeh.antennapod.core.util.comparator.DownloadStatusComparator;
 import de.danoeh.antennapod.core.util.comparator.FeedItemPubdateComparator;
@@ -43,11 +43,6 @@ import de.danoeh.antennapod.core.util.comparator.PlaybackCompletionDateComparato
 public final class DBReader {
 
     private static final String TAG = "DBReader";
-
-    /**
-     * Maximum size of the list returned by {@link #getPlaybackHistory()}.
-     */
-    public static final int PLAYBACK_HISTORY_SIZE = 50;
 
     /**
      * Maximum size of the list returned by {@link #getDownloadLog()}.
@@ -101,7 +96,10 @@ public final class DBReader {
         try (Cursor cursor = adapter.getFeedCursorDownloadUrls()) {
             List<String> result = new ArrayList<>(cursor.getCount());
             while (cursor.moveToNext()) {
-                result.add(cursor.getString(1));
+                String url = cursor.getString(1);
+                if (url != null && !url.startsWith(Feed.PREFIX_LOCAL_FOLDER)) {
+                    result.add(url);
+                }
             }
             return result;
         } finally {
@@ -339,33 +337,12 @@ public final class DBReader {
         }
     }
 
-    /**
-     * Loads a list of favorite items.
-     *
-     * @param offset The first episode that should be loaded.
-     * @param limit The maximum number of episodes that should be loaded.
-     * @return A list of FeedItems that are marked as favorite.
-     */
-    public static List<FeedItem> getFavoriteItemsList(int offset, int limit) {
-        Log.d(TAG, "getFavoriteItemsList() called");
-
-        PodDBAdapter adapter = PodDBAdapter.getInstance();
-        adapter.open();
-        try (Cursor cursor = adapter.getFavoritesCursor(offset, limit)) {
-            List<FeedItem> items = extractItemlistFromCursor(adapter, cursor);
-            loadAdditionalFeedItemListData(items);
-            return items;
-        } finally {
-            adapter.close();
-        }
-    }
-
     private static LongList getFavoriteIDList() {
         Log.d(TAG, "getFavoriteIDList() called");
 
         PodDBAdapter adapter = PodDBAdapter.getInstance();
         adapter.open();
-        try (Cursor cursor = adapter.getFavoritesCursor(0, Integer.MAX_VALUE)) {
+        try (Cursor cursor = adapter.getFavoritesIdsCursor(0, Integer.MAX_VALUE)) {
             LongList favoriteIDs = new LongList(cursor.getCount());
             while (cursor.moveToNext()) {
                 favoriteIDs.add(cursor.getLong(0));
@@ -398,15 +375,41 @@ public final class DBReader {
         }
     }
 
+    public static List<FeedItem> getRandomEpisodes(int limit, int seed) {
+        PodDBAdapter adapter = PodDBAdapter.getInstance();
+        adapter.open();
+        try (Cursor cursor = adapter.getRandomEpisodesCursor(limit, seed)) {
+            List<FeedItem> items = extractItemlistFromCursor(adapter, cursor);
+            loadAdditionalFeedItemListData(items);
+            return items;
+        } finally {
+            adapter.close();
+        }
+    }
+
+    public static int getTotalEpisodeCount(FeedItemFilter filter) {
+        PodDBAdapter adapter = PodDBAdapter.getInstance();
+        adapter.open();
+        try (Cursor cursor = adapter.getTotalEpisodeCountCursor(filter)) {
+            if (cursor.moveToFirst()) {
+                return cursor.getInt(0);
+            }
+            return -1;
+        } finally {
+            adapter.close();
+        }
+    }
+
     /**
      * Loads the playback history from the database. A FeedItem is in the playback history if playback of the correpsonding episode
      * has been completed at least once.
      *
+     * @param limit The maximum number of items to return.
+     *
      * @return The playback history. The FeedItems are sorted by their media's playbackCompletionDate in descending order.
-     * The size of the returned list is limited by {@link #PLAYBACK_HISTORY_SIZE}.
      */
     @NonNull
-    public static List<FeedItem> getPlaybackHistory() {
+    public static List<FeedItem> getPlaybackHistory(int offset, int limit) {
         Log.d(TAG, "getPlaybackHistory() called");
 
         PodDBAdapter adapter = PodDBAdapter.getInstance();
@@ -415,7 +418,7 @@ public final class DBReader {
         Cursor mediaCursor = null;
         Cursor itemCursor = null;
         try {
-            mediaCursor = adapter.getCompletedMediaCursor(PLAYBACK_HISTORY_SIZE);
+            mediaCursor = adapter.getCompletedMediaCursor(offset, limit);
             String[] itemIds = new String[mediaCursor.getCount()];
             for (int i = 0; i < itemIds.length && mediaCursor.moveToPosition(i); i++) {
                 int index = mediaCursor.getColumnIndex(PodDBAdapter.KEY_FEEDITEM);
@@ -437,6 +440,17 @@ public final class DBReader {
         }
     }
 
+    public static long getPlaybackHistoryLength() {
+        PodDBAdapter adapter = PodDBAdapter.getInstance();
+        adapter.open();
+
+        try {
+            return adapter.getCompletedMediaLength();
+        } finally {
+            adapter.close();
+        }
+    }
+
     /**
      * Loads the download log from the database.
      *
@@ -451,7 +465,7 @@ public final class DBReader {
         try (Cursor cursor = adapter.getDownloadLogCursor(DOWNLOAD_LOG_SIZE)) {
             List<DownloadStatus> downloadLog = new ArrayList<>(cursor.getCount());
             while (cursor.moveToNext()) {
-                downloadLog.add(DownloadStatus.fromCursor(cursor));
+                downloadLog.add(DownloadStatusCursorMapper.convert(cursor));
             }
             Collections.sort(downloadLog, new DownloadStatusComparator());
             return downloadLog;
@@ -475,7 +489,7 @@ public final class DBReader {
         try (Cursor cursor = adapter.getDownloadLog(Feed.FEEDFILETYPE_FEED, feedId)) {
             List<DownloadStatus> downloadLog = new ArrayList<>(cursor.getCount());
             while (cursor.moveToNext()) {
-                downloadLog.add(DownloadStatus.fromCursor(cursor));
+                downloadLog.add(DownloadStatusCursorMapper.convert(cursor));
             }
             Collections.sort(downloadLog, new DownloadStatusComparator());
             return downloadLog;
@@ -559,6 +573,47 @@ public final class DBReader {
         adapter.open();
         try {
             return getFeedItem(itemId, adapter);
+        } finally {
+            adapter.close();
+        }
+    }
+
+    /**
+     * Get next feed item in queue following a particular feeditem
+     *
+     * @param item The FeedItem
+     * @return The FeedItem next in queue or null if the FeedItem could not be found.
+     */
+    @Nullable
+    public static FeedItem getNextInQueue(FeedItem item) {
+        Log.d(TAG, "getNextInQueue() called with: " + "itemId = [" + item.getId() + "]");
+        PodDBAdapter adapter = PodDBAdapter.getInstance();
+        adapter.open();
+        try {
+            FeedItem nextItem = null;
+            try (Cursor cursor = adapter.getNextInQueue(item)) {
+                List<FeedItem> list = extractItemlistFromCursor(adapter, cursor);
+                if (!list.isEmpty()) {
+                    nextItem = list.get(0);
+                    loadAdditionalFeedItemListData(list);
+                }
+                return nextItem;
+            } catch (Exception e) {
+                return null;
+            }
+        } finally {
+            adapter.close();
+        }
+    }
+
+    @NonNull
+    public static List<FeedItem> getPausedQueue(int limit) {
+        PodDBAdapter adapter = PodDBAdapter.getInstance();
+        adapter.open();
+        try (Cursor cursor = adapter.getPausedQueueCursor(limit)) {
+            List<FeedItem> items = extractItemlistFromCursor(adapter, cursor);
+            loadAdditionalFeedItemListData(items);
+            return items;
         } finally {
             adapter.close();
         }
@@ -743,67 +798,93 @@ public final class DBReader {
         }
     }
 
+    public static List<FeedItem> getFeedItemsWithMedia(Long[] mediaIds) {
+        PodDBAdapter adapter = PodDBAdapter.getInstance();
+        adapter.open();
+        try (Cursor itemCursor = adapter.getFeedItemCursorByMediaIds(mediaIds)) {
+            List<FeedItem> items = extractItemlistFromCursor(adapter, itemCursor);
+            loadAdditionalFeedItemListData(items);
+            Collections.sort(items, new PlaybackCompletionDateComparator());
+            return items;
+        } finally {
+            adapter.close();
+        }
+    }
+
+    public static class MonthlyStatisticsItem {
+        public int year = 0;
+        public int month = 0;
+        public long timePlayed = 0;
+    }
+
+    @NonNull
+    public static List<MonthlyStatisticsItem> getMonthlyTimeStatistics() {
+        List<MonthlyStatisticsItem> months = new ArrayList<>();
+        PodDBAdapter adapter = PodDBAdapter.getInstance();
+        adapter.open();
+        try (Cursor cursor = adapter.getMonthlyStatisticsCursor()) {
+            int indexMonth = cursor.getColumnIndexOrThrow("month");
+            int indexYear = cursor.getColumnIndexOrThrow("year");
+            int indexTotalDuration = cursor.getColumnIndexOrThrow("total_duration");
+            while (cursor.moveToNext()) {
+                MonthlyStatisticsItem item = new MonthlyStatisticsItem();
+                item.month = Integer.parseInt(cursor.getString(indexMonth));
+                item.year = Integer.parseInt(cursor.getString(indexYear));
+                item.timePlayed = cursor.getLong(indexTotalDuration);
+                months.add(item);
+            }
+        }
+        adapter.close();
+        return months;
+    }
+
+    public static class StatisticsResult {
+        public List<StatisticsItem> feedTime = new ArrayList<>();
+        public long oldestDate = System.currentTimeMillis();
+    }
+
     /**
      * Searches the DB for statistics.
      *
      * @return The list of statistics objects
      */
     @NonNull
-    public static List<StatisticsItem> getStatistics() {
+    public static StatisticsResult getStatistics(boolean includeMarkedAsPlayed,
+                                                 long timeFilterFrom, long timeFilterTo) {
         PodDBAdapter adapter = PodDBAdapter.getInstance();
         adapter.open();
 
-        List<StatisticsItem> feedTime = new ArrayList<>();
+        StatisticsResult result = new StatisticsResult();
+        try (Cursor cursor = adapter.getFeedStatisticsCursor(includeMarkedAsPlayed, timeFilterFrom, timeFilterTo)) {
+            int indexOldestDate = cursor.getColumnIndexOrThrow("oldest_date");
+            int indexNumEpisodes = cursor.getColumnIndexOrThrow("num_episodes");
+            int indexEpisodesStarted = cursor.getColumnIndexOrThrow("episodes_started");
+            int indexTotalTime = cursor.getColumnIndexOrThrow("total_time");
+            int indexPlayedTime = cursor.getColumnIndexOrThrow("played_time");
+            int indexNumDownloaded = cursor.getColumnIndexOrThrow("num_downloaded");
+            int indexDownloadSize = cursor.getColumnIndexOrThrow("download_size");
 
-        List<Feed> feeds = getFeedList();
-        for (Feed feed : feeds) {
-            long feedPlayedTimeCountAll = 0;
-            long feedPlayedTime = 0;
-            long feedTotalTime = 0;
-            long episodes = 0;
-            long episodesStarted = 0;
-            long episodesStartedIncludingMarked = 0;
-            long totalDownloadSize = 0;
-            long episodesDownloadCount = 0;
-            List<FeedItem> items = getFeed(feed.getId()).getItems();
-            for (FeedItem item : items) {
-                FeedMedia media = item.getMedia();
-                if (media == null) {
-                    continue;
+            while (cursor.moveToNext()) {
+                Feed feed = extractFeedFromCursorRow(cursor);
+
+                long feedPlayedTime = Long.parseLong(cursor.getString(indexPlayedTime)) / 1000;
+                long feedTotalTime = Long.parseLong(cursor.getString(indexTotalTime)) / 1000;
+                long episodes = Long.parseLong(cursor.getString(indexNumEpisodes));
+                long episodesStarted = Long.parseLong(cursor.getString(indexEpisodesStarted));
+                long totalDownloadSize = Long.parseLong(cursor.getString(indexDownloadSize));
+                long episodesDownloadCount = Long.parseLong(cursor.getString(indexNumDownloaded));
+                long oldestDate = Long.parseLong(cursor.getString(indexOldestDate));
+
+                if (episodes > 0 && oldestDate < Long.MAX_VALUE) {
+                    result.oldestDate = Math.min(result.oldestDate, oldestDate);
                 }
 
-                feedPlayedTime += media.getPlayedDuration() / 1000;
-
-                if (item.isPlayed()) {
-                    feedPlayedTimeCountAll += media.getDuration() / 1000;
-                } else {
-                    feedPlayedTimeCountAll += media.getPosition() / 1000;
-                }
-
-                if (media.getPlaybackCompletionDate() != null || media.getPlayedDuration() > 0) {
-                    episodesStarted++;
-                }
-
-                if (item.isPlayed() || media.getPosition() != 0) {
-                    episodesStartedIncludingMarked++;
-                }
-
-                feedTotalTime += media.getDuration() / 1000;
-
-                if (media.isDownloaded()) {
-                    totalDownloadSize += new File(media.getFile_url()).length();
-                    episodesDownloadCount++;
-                }
-
-                episodes++;
+                result.feedTime.add(new StatisticsItem(feed, feedTotalTime, feedPlayedTime, episodes,
+                        episodesStarted, totalDownloadSize, episodesDownloadCount));
             }
-            feedTime.add(new StatisticsItem(
-                    feed, feedTotalTime, feedPlayedTime, feedPlayedTimeCountAll, episodes,
-                    episodesStarted, episodesStartedIncludingMarked, totalDownloadSize, episodesDownloadCount));
         }
-
         adapter.close();
-        return feedTime;
+        return result;
     }
 
     /**
@@ -817,7 +898,7 @@ public final class DBReader {
         PodDBAdapter adapter = PodDBAdapter.getInstance();
         adapter.open();
 
-        final LongIntMap feedCounters = adapter.getFeedCounters();
+        final Map<Long, Integer> feedCounters = adapter.getFeedCounters(UserPreferences.getFeedCounterSetting());
         SubscriptionsFilter subscriptionsFilter = UserPreferences.getSubscriptionsFilter();
         List<Feed> feeds = subscriptionsFilter.filter(getFeedList(adapter), feedCounters);
 
@@ -825,8 +906,8 @@ public final class DBReader {
         int feedOrder = UserPreferences.getFeedOrder();
         if (feedOrder == UserPreferences.FEED_ORDER_COUNTER) {
             comparator = (lhs, rhs) -> {
-                long counterLhs = feedCounters.get(lhs.getId());
-                long counterRhs = feedCounters.get(rhs.getId());
+                long counterLhs = feedCounters.containsKey(lhs.getId()) ? feedCounters.get(lhs.getId()) : 0;
+                long counterRhs = feedCounters.containsKey(rhs.getId()) ? feedCounters.get(rhs.getId()) : 0;
                 if (counterLhs > counterRhs) {
                     // reverse natural order: podcast with most unplayed episodes first
                     return -1;
@@ -849,11 +930,11 @@ public final class DBReader {
                 }
             };
         } else if (feedOrder == UserPreferences.FEED_ORDER_MOST_PLAYED) {
-            final LongIntMap playedCounters = adapter.getPlayedEpisodesCounters();
+            final Map<Long, Integer> playedCounters = adapter.getPlayedEpisodesCounters();
 
             comparator = (lhs, rhs) -> {
-                long counterLhs = playedCounters.get(lhs.getId());
-                long counterRhs = playedCounters.get(rhs.getId());
+                long counterLhs = playedCounters.containsKey(lhs.getId()) ? playedCounters.get(lhs.getId()) : 0;
+                long counterRhs = playedCounters.containsKey(rhs.getId()) ? playedCounters.get(rhs.getId()) : 0;
                 if (counterLhs > counterRhs) {
                     // podcast with most played episodes first
                     return -1;
@@ -881,8 +962,8 @@ public final class DBReader {
         Map<String, NavDrawerData.TagDrawerItem> folders = new HashMap<>();
         for (Feed feed : feeds) {
             for (String tag : feed.getPreferences().getTags()) {
-                NavDrawerData.FeedDrawerItem drawerItem = new NavDrawerData.FeedDrawerItem(feed, feed.getId(),
-                        feedCounters.get(feed.getId()));
+                int counter = feedCounters.containsKey(feed.getId()) ? feedCounters.get(feed.getId()) : 0;
+                NavDrawerData.FeedDrawerItem drawerItem = new NavDrawerData.FeedDrawerItem(feed, feed.getId(), counter);
                 if (FeedPreferences.TAG_ROOT.equals(tag)) {
                     items.add(drawerItem);
                     continue;
@@ -903,7 +984,7 @@ public final class DBReader {
         items.addAll(foldersSorted);
 
         NavDrawerData result = new NavDrawerData(items, queueSize, numNewItems, numDownloadedItems,
-                feedCounters, UserPreferences.getEpisodeCleanupAlgorithm().getReclaimableItems());
+                feedCounters, EpisodeCleanupAlgorithmFactory.build().getReclaimableItems());
         adapter.close();
         return result;
     }

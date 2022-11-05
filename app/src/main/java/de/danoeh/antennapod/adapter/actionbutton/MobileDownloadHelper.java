@@ -2,14 +2,13 @@ package de.danoeh.antennapod.adapter.actionbutton;
 
 import android.content.Context;
 
-import androidx.appcompat.app.AlertDialog;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import de.danoeh.antennapod.R;
-import de.danoeh.antennapod.core.dialog.DownloadRequestErrorDialogCreator;
+import de.danoeh.antennapod.core.service.download.DownloadRequestCreator;
+import de.danoeh.antennapod.core.service.download.DownloadService;
 import de.danoeh.antennapod.model.feed.FeedItem;
 import de.danoeh.antennapod.core.storage.DBReader;
 import de.danoeh.antennapod.core.storage.DBWriter;
-import de.danoeh.antennapod.core.storage.DownloadRequestException;
-import de.danoeh.antennapod.core.storage.DownloadRequester;
 
 class MobileDownloadHelper {
     private static long addToQueueTimestamp;
@@ -25,7 +24,7 @@ class MobileDownloadHelper {
     }
 
     static void confirmMobileDownload(final Context context, final FeedItem item) {
-        AlertDialog.Builder builder = new AlertDialog.Builder(context)
+        MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(context)
                 .setTitle(R.string.confirm_mobile_download_dialog_title)
                 .setMessage(R.string.confirm_mobile_download_dialog_message)
                 .setPositiveButton(context.getText(R.string.confirm_mobile_download_dialog_enable_temporarily),
@@ -45,11 +44,6 @@ class MobileDownloadHelper {
 
     private static void downloadFeedItems(Context context, FeedItem item) {
         allowMobileDownloadTimestamp = System.currentTimeMillis();
-        try {
-            DownloadRequester.getInstance().downloadMedia(context, true, item);
-        } catch (DownloadRequestException e) {
-            e.printStackTrace();
-            DownloadRequestErrorDialogCreator.newRequestErrorDialog(context, e.getMessage());
-        }
+        DownloadService.download(context, true, DownloadRequestCreator.create(item.getMedia()).build());
     }
 }

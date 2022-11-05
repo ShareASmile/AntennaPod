@@ -21,6 +21,8 @@ import de.danoeh.antennapod.R;
 import de.danoeh.antennapod.activity.MainActivity;
 import de.danoeh.antennapod.adapter.CoverLoader;
 import de.danoeh.antennapod.adapter.actionbutton.ItemActionButton;
+import de.danoeh.antennapod.core.service.download.DownloadRequest;
+import de.danoeh.antennapod.core.service.download.DownloadService;
 import de.danoeh.antennapod.event.playback.PlaybackPositionEvent;
 import de.danoeh.antennapod.core.util.DateFormatter;
 import de.danoeh.antennapod.model.feed.FeedItem;
@@ -28,12 +30,10 @@ import de.danoeh.antennapod.model.feed.FeedMedia;
 import de.danoeh.antennapod.model.playback.MediaType;
 import de.danoeh.antennapod.core.feed.util.ImageResourceUtils;
 import de.danoeh.antennapod.core.preferences.UserPreferences;
-import de.danoeh.antennapod.core.service.download.DownloadRequest;
-import de.danoeh.antennapod.core.service.playback.PlaybackService;
-import de.danoeh.antennapod.core.storage.DownloadRequester;
 import de.danoeh.antennapod.core.util.Converter;
 import de.danoeh.antennapod.core.util.FeedItemUtil;
 import de.danoeh.antennapod.core.util.NetworkUtils;
+import de.danoeh.antennapod.model.playback.Playable;
 import de.danoeh.antennapod.ui.common.CircularProgressBar;
 import de.danoeh.antennapod.ui.common.ThemeUtils;
 
@@ -52,7 +52,7 @@ public class EpisodeItemViewHolder extends RecyclerView.ViewHolder {
     private final TextView position;
     private final TextView duration;
     private final TextView size;
-    public final TextView isNew;
+    public final ImageView isInbox;
     public final ImageView isInQueue;
     private final ImageView isVideo;
     public final ImageView isFavorite;
@@ -85,7 +85,7 @@ public class EpisodeItemViewHolder extends RecyclerView.ViewHolder {
         progressBar = itemView.findViewById(R.id.progressBar);
         isInQueue = itemView.findViewById(R.id.ivInPlaylist);
         isVideo = itemView.findViewById(R.id.ivIsVideo);
-        isNew = itemView.findViewById(R.id.statusUnread);
+        isInbox = itemView.findViewById(R.id.statusInbox);
         isFavorite = itemView.findViewById(R.id.isFavorite);
         size = itemView.findViewById(R.id.size);
         separatorIcons = itemView.findViewById(R.id.separatorIcons);
@@ -104,8 +104,8 @@ public class EpisodeItemViewHolder extends RecyclerView.ViewHolder {
         title.setText(item.getTitle());
         leftPadding.setContentDescription(item.getTitle());
         pubDate.setText(DateFormatter.formatAbbrev(activity, item.getPubDate()));
-        pubDate.setContentDescription(DateFormatter.formatForAccessibility(activity, item.getPubDate()));
-        isNew.setVisibility(item.isNew() ? View.VISIBLE : View.GONE);
+        pubDate.setContentDescription(DateFormatter.formatForAccessibility(item.getPubDate()));
+        isInbox.setVisibility(item.isNew() ? View.VISIBLE : View.GONE);
         isFavorite.setVisibility(item.isTagged(FeedItem.TAG_FAVORITE) ? View.VISIBLE : View.GONE);
         isInQueue.setVisibility(item.isTagged(FeedItem.TAG_QUEUE) ? View.VISIBLE : View.GONE);
         container.setAlpha(item.isPlayed() ? 0.5f : 1.0f);
@@ -145,8 +145,8 @@ public class EpisodeItemViewHolder extends RecyclerView.ViewHolder {
             itemView.setBackgroundResource(ThemeUtils.getDrawableFromAttr(activity, R.attr.selectableItemBackground));
         }
 
-        if (DownloadRequester.getInstance().isDownloadingFile(media)) {
-            final DownloadRequest downloadRequest = DownloadRequester.getInstance().getRequestFor(media);
+        if (DownloadService.isDownloadingFile(media.getDownload_url())) {
+            final DownloadRequest downloadRequest = DownloadService.findRequest(media.getDownload_url());
             float percent = 0.01f * downloadRequest.getProgressPercent();
             secondaryActionProgress.setPercentage(Math.max(percent, 0.01f), item);
         } else if (media.isDownloaded()) {
@@ -198,12 +198,39 @@ public class EpisodeItemViewHolder extends RecyclerView.ViewHolder {
         }
     }
 
+    public void bindDummy() {
+        item = new FeedItem();
+        container.setAlpha(0.1f);
+        secondaryActionIcon.setImageDrawable(null);
+        isInbox.setVisibility(View.VISIBLE);
+        isVideo.setVisibility(View.GONE);
+        isFavorite.setVisibility(View.GONE);
+        isInQueue.setVisibility(View.GONE);
+        title.setText("███████");
+        pubDate.setText("████");
+        duration.setText("████");
+        secondaryActionProgress.setPercentage(0, null);
+        progressBar.setVisibility(View.GONE);
+        position.setVisibility(View.GONE);
+        dragHandle.setVisibility(View.GONE);
+        size.setText("");
+        itemView.setBackgroundResource(ThemeUtils.getDrawableFromAttr(activity, R.attr.selectableItemBackground));
+        placeholder.setText("");
+        if (coverHolder.getVisibility() == View.VISIBLE) {
+            new CoverLoader(activity)
+                    .withResource(ThemeUtils.getDrawableFromAttr(activity, android.R.attr.textColorSecondary))
+                    .withPlaceholderView(placeholder)
+                    .withCoverView(cover)
+                    .load();
+        }
+    }
+
     private void updateDuration(PlaybackPositionEvent event) {
         int currentPosition = event.getPosition();
         int timeDuration = event.getDuration();
         int remainingTime = Math.max(timeDuration - currentPosition, 0);
         Log.d(TAG, "currentPosition " + Converter.getDurationStringLong(currentPosition));
-        if (currentPosition == PlaybackService.INVALID_TIME || timeDuration == PlaybackService.INVALID_TIME) {
+        if (currentPosition == Playable.INVALID_TIME || timeDuration == Playable.INVALID_TIME) {
             Log.w(TAG, "Could not react to position observer update because of invalid time");
             return;
         }
@@ -233,11 +260,11 @@ public class EpisodeItemViewHolder extends RecyclerView.ViewHolder {
      * Hides the separator dot between icons and text if there are no icons.
      */
     public void hideSeparatorIfNecessary() {
-        boolean hasIcons = isNew.getVisibility() == View.VISIBLE
+        boolean hasIcons = isInbox.getVisibility() == View.VISIBLE
                 || isInQueue.getVisibility() == View.VISIBLE
                 || isVideo.getVisibility() == View.VISIBLE
                 || isFavorite.getVisibility() == View.VISIBLE
-                || isNew.getVisibility() == View.VISIBLE;
+                || isInbox.getVisibility() == View.VISIBLE;
         separatorIcons.setVisibility(hasIcons ? View.VISIBLE : View.GONE);
     }
 }

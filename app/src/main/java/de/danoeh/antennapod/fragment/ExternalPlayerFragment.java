@@ -23,9 +23,9 @@ import de.danoeh.antennapod.model.playback.MediaType;
 import de.danoeh.antennapod.core.feed.util.ImageResourceUtils;
 import de.danoeh.antennapod.core.glide.ApGlideSettings;
 import de.danoeh.antennapod.core.service.playback.PlaybackService;
-import de.danoeh.antennapod.core.service.playback.PlayerStatus;
 import de.danoeh.antennapod.model.playback.Playable;
 import de.danoeh.antennapod.core.util.playback.PlaybackController;
+import de.danoeh.antennapod.playback.base.PlayerStatus;
 import de.danoeh.antennapod.view.PlayButton;
 import io.reactivex.Maybe;
 import io.reactivex.android.schedulers.AndroidSchedulers;
@@ -139,8 +139,8 @@ public class ExternalPlayerFragment extends Fragment {
     public void onPositionObserverUpdate(PlaybackPositionEvent event) {
         if (controller == null) {
             return;
-        } else if (controller.getPosition() == PlaybackService.INVALID_TIME
-                || controller.getDuration() == PlaybackService.INVALID_TIME) {
+        } else if (controller.getPosition() == Playable.INVALID_TIME
+                || controller.getDuration() == Playable.INVALID_TIME) {
             return;
         }
         progressBar.setProgress((int)

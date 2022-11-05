@@ -1,15 +1,17 @@
 package de.danoeh.antennapod.core.feed;
 
-import android.content.ContentResolver;
 import android.content.Context;
 import android.media.MediaMetadataRetriever;
 import android.net.Uri;
 import android.text.TextUtils;
+import android.util.Log;
 
 import androidx.annotation.NonNull;
-import androidx.documentfile.provider.DocumentFile;
+import androidx.annotation.Nullable;
 
+import java.io.BufferedInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -22,26 +24,47 @@ import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 
+import androidx.annotation.VisibleForTesting;
+import androidx.documentfile.provider.DocumentFile;
 import de.danoeh.antennapod.core.R;
-import de.danoeh.antennapod.core.service.download.DownloadStatus;
+import de.danoeh.antennapod.core.util.FastDocumentFile;
+import de.danoeh.antennapod.model.download.DownloadStatus;
 import de.danoeh.antennapod.core.storage.DBReader;
 import de.danoeh.antennapod.core.storage.DBTasks;
 import de.danoeh.antennapod.core.storage.DBWriter;
 import de.danoeh.antennapod.parser.feed.util.DateUtils;
-import de.danoeh.antennapod.core.util.DownloadError;
+import de.danoeh.antennapod.model.download.DownloadError;
 import de.danoeh.antennapod.model.feed.Feed;
 import de.danoeh.antennapod.model.feed.FeedItem;
 import de.danoeh.antennapod.model.feed.FeedMedia;
 import de.danoeh.antennapod.model.feed.FeedPreferences;
 import de.danoeh.antennapod.model.playback.MediaType;
+import de.danoeh.antennapod.parser.feed.util.MimeTypeUtils;
+import de.danoeh.antennapod.parser.media.id3.ID3ReaderException;
+import de.danoeh.antennapod.parser.media.id3.Id3MetadataReader;
+import de.danoeh.antennapod.parser.media.vorbis.VorbisCommentMetadataReader;
+import de.danoeh.antennapod.parser.media.vorbis.VorbisCommentReaderException;
+import org.apache.commons.io.input.CountingInputStream;
 
 public class LocalFeedUpdater {
+    private static final String TAG = "LocalFeedUpdater";
 
-    static final String[] PREFERRED_FEED_IMAGE_FILENAMES = { "folder.jpg", "Folder.jpg", "folder.png", "Folder.png" };
+    static final String[] PREFERRED_FEED_IMAGE_FILENAMES = {"folder.jpg", "Folder.jpg", "folder.png", "Folder.png"};
 
-    public static void updateFeed(Feed feed, Context context) {
+    public static void updateFeed(Feed feed, Context context,
+                                  @Nullable UpdaterProgressListener updaterProgressListener) {
         try {
-            tryUpdateFeed(feed, context);
+            String uriString = feed.getDownload_url().replace(Feed.PREFIX_LOCAL_FOLDER, "");
+            DocumentFile documentFolder = DocumentFile.fromTreeUri(context, Uri.parse(uriString));
+            if (documentFolder == null) {
+                throw new IOException("Unable to retrieve document tree. "
+                        + "Try re-connecting the folder on the podcast info page.");
+            }
+            if (!documentFolder.exists() || !documentFolder.canRead()) {
+                throw new IOException("Cannot read local directory. "
+                        + "Try re-connecting the folder on the podcast info page.");
+            }
+            tryUpdateFeed(feed, context, documentFolder.getUri(), updaterProgressListener);
 
             if (mustReportDownloadSuccessful(feed)) {
                 reportSuccess(feed);
@@ -52,18 +75,9 @@ public class LocalFeedUpdater {
         }
     }
 
-    private static void tryUpdateFeed(Feed feed, Context context) throws IOException {
-        String uriString = feed.getDownload_url().replace(Feed.PREFIX_LOCAL_FOLDER, "");
-        DocumentFile documentFolder = DocumentFile.fromTreeUri(context, Uri.parse(uriString));
-        if (documentFolder == null) {
-            throw new IOException("Unable to retrieve document tree. "
-                    + "Try re-connecting the folder on the podcast info page.");
-        }
-        if (!documentFolder.exists() || !documentFolder.canRead()) {
-            throw new IOException("Cannot read local directory. "
-                    + "Try re-connecting the folder on the podcast info page.");
-        }
-
+    @VisibleForTesting
+    static void tryUpdateFeed(Feed feed, Context context, Uri folderUri,
+                              UpdaterProgressListener updaterProgressListener) {
         if (feed.getItems() == null) {
             feed.setItems(new ArrayList<>());
         }
@@ -71,24 +85,12 @@ public class LocalFeedUpdater {
         feed = DBTasks.updateFeed(context, feed, false);
 
         // list files in feed folder
-        List<DocumentFile> mediaFiles = new ArrayList<>();
+        List<FastDocumentFile> allFiles = FastDocumentFile.list(context, folderUri);
+        List<FastDocumentFile> mediaFiles = new ArrayList<>();
         Set<String> mediaFileNames = new HashSet<>();
-        for (DocumentFile file : documentFolder.listFiles()) {
-            String mime = file.getType();
-            if (mime == null) {
-                continue;
-            }
-
-            MediaType mediaType = MediaType.fromMimeType(mime);
-            if (mediaType == MediaType.UNKNOWN) {
-                String path = file.getUri().toString();
-                int fileExtensionPosition = path.lastIndexOf('.');
-                if (fileExtensionPosition >= 0) {
-                    String extensionWithoutDot = path.substring(fileExtensionPosition + 1);
-                    mediaType = MediaType.fromFileExtension(extensionWithoutDot);
-                }
-            }
-
+        for (FastDocumentFile file : allFiles) {
+            String mimeType = MimeTypeUtils.getMimeType(file.getType(), file.getUri().toString());
+            MediaType mediaType = MediaType.fromMimeType(mimeType);
             if (mediaType == MediaType.AUDIO || mediaType == MediaType.VIDEO) {
                 mediaFiles.add(file);
                 mediaFileNames.add(file.getName());
@@ -97,13 +99,16 @@ public class LocalFeedUpdater {
 
         // add new files to feed and update item data
         List<FeedItem> newItems = feed.getItems();
-        for (DocumentFile f : mediaFiles) {
-            FeedItem oldItem = feedContainsFile(feed, f.getName());
-            FeedItem newItem = createFeedItem(feed, f, context);
+        for (int i = 0; i < mediaFiles.size(); i++) {
+            FeedItem oldItem = feedContainsFile(feed, mediaFiles.get(i).getName());
+            FeedItem newItem = createFeedItem(feed, mediaFiles.get(i), context);
             if (oldItem == null) {
                 newItems.add(newItem);
             } else {
                 oldItem.updateFromOther(newItem);
+            }
+            if (updaterProgressListener != null) {
+                updaterProgressListener.onLocalFileScanned(i, mediaFiles.size());
             }
         }
 
@@ -116,7 +121,7 @@ public class LocalFeedUpdater {
             }
         }
 
-        feed.setImageUrl(getImageUrl(context, documentFolder));
+        feed.setImageUrl(getImageUrl(allFiles, folderUri));
 
         feed.getPreferences().setAutoDownload(false);
         feed.getPreferences().setAutoDeleteAction(FeedPreferences.AutoDeleteAction.NO);
@@ -134,17 +139,18 @@ public class LocalFeedUpdater {
      * Returns the image URL for the local feed.
      */
     @NonNull
-    static String getImageUrl(@NonNull Context context, @NonNull DocumentFile documentFolder) {
+    static String getImageUrl(List<FastDocumentFile> files, Uri folderUri) {
         // look for special file names
         for (String iconLocation : PREFERRED_FEED_IMAGE_FILENAMES) {
-            DocumentFile image = documentFolder.findFile(iconLocation);
-            if (image != null) {
-                return image.getUri().toString();
+            for (FastDocumentFile file : files) {
+                if (iconLocation.equals(file.getName())) {
+                    return file.getUri().toString();
+                }
             }
         }
 
         // use the first image in the folder if existing
-        for (DocumentFile file : documentFolder.listFiles()) {
+        for (FastDocumentFile file : files) {
             String mime = file.getType();
             if (mime != null && (mime.startsWith("image/jpeg") || mime.startsWith("image/png"))) {
                 return file.getUri().toString();
@@ -152,17 +158,7 @@ public class LocalFeedUpdater {
         }
 
         // use default icon as fallback
-        return getDefaultIconUrl(context);
-    }
-
-    /**
-     * Returns the URL of the default icon for a local feed. The URL refers to an app resource file.
-     */
-    public static String getDefaultIconUrl(Context context) {
-        String resourceEntryName = context.getResources().getResourceEntryName(R.raw.local_feed_default_icon);
-        return ContentResolver.SCHEME_ANDROID_RESOURCE + "://"
-                + context.getPackageName() + "/raw/"
-                + resourceEntryName;
+        return Feed.PREFIX_GENERATIVE_COVER + folderUri;
     }
 
     private static FeedItem feedContainsFile(Feed feed, String filename) {
@@ -175,26 +171,36 @@ public class LocalFeedUpdater {
         return null;
     }
 
-    private static FeedItem createFeedItem(Feed feed, DocumentFile file, Context context) {
+    private static FeedItem createFeedItem(Feed feed, FastDocumentFile file, Context context) {
         FeedItem item = new FeedItem(0, file.getName(), UUID.randomUUID().toString(),
-                file.getName(), new Date(file.lastModified()), FeedItem.UNPLAYED, feed);
+                file.getName(), new Date(file.getLastModified()), FeedItem.UNPLAYED, feed);
         item.disableAutoDownload();
 
-        long size = file.length();
+        long size = file.getLength();
         FeedMedia media = new FeedMedia(0, item, 0, 0, size, file.getType(),
                 file.getUri().toString(), file.getUri().toString(), false, null, 0, 0);
         item.setMedia(media);
 
+        for (FeedItem existingItem : feed.getItems()) {
+            if (existingItem.getMedia() != null
+                    && existingItem.getMedia().getDownload_url().equals(file.getUri().toString())
+                    && file.getLength() == existingItem.getMedia().getSize()) {
+                // We found an old file that we already scanned. Re-use metadata.
+                item.updateFromOther(existingItem);
+                return item;
+            }
+        }
+
+        // Did not find existing item. Scan metadata.
         try {
             loadMetadata(item, file, context);
         } catch (Exception e) {
             item.setDescriptionIfLonger(e.getMessage());
         }
-
         return item;
     }
 
-    private static void loadMetadata(FeedItem item, DocumentFile file, Context context) {
+    private static void loadMetadata(FeedItem item, FastDocumentFile file, Context context) {
         MediaMetadataRetriever mediaMetadataRetriever = new MediaMetadataRetriever();
         mediaMetadataRetriever.setDataSource(context, file.getUri());
 
@@ -220,6 +226,24 @@ public class LocalFeedUpdater {
         item.getMedia().setDuration((int) Long.parseLong(durationStr));
 
         item.getMedia().setHasEmbeddedPicture(mediaMetadataRetriever.getEmbeddedPicture() != null);
+        mediaMetadataRetriever.close();
+
+        try (InputStream inputStream = context.getContentResolver().openInputStream(file.getUri())) {
+            Id3MetadataReader reader = new Id3MetadataReader(
+                    new CountingInputStream(new BufferedInputStream(inputStream)));
+            reader.readInputStream();
+            item.setDescriptionIfLonger(reader.getComment());
+        } catch (IOException | ID3ReaderException e) {
+            Log.d(TAG, "Unable to parse ID3 of " + file.getUri() + ": " + e.getMessage());
+
+            try (InputStream inputStream = context.getContentResolver().openInputStream(file.getUri())) {
+                VorbisCommentMetadataReader reader = new VorbisCommentMetadataReader(inputStream);
+                reader.readInputStream();
+                item.setDescriptionIfLonger(reader.getDescription());
+            } catch (IOException | VorbisCommentReaderException e2) {
+                Log.d(TAG, "Unable to parse vorbis comments of " + file.getUri() + ": " + e2.getMessage());
+            }
+        }
     }
 
     private static void reportError(Feed feed, String reasonDetailed) {
@@ -258,5 +282,10 @@ public class LocalFeedUpdater {
         // report success if the last update was not successful
         // (avoid logging success again if the last update was ok)
         return !lastDownloadStatus.isSuccessful();
+    }
+
+    @FunctionalInterface
+    public interface UpdaterProgressListener {
+        void onLocalFileScanned(int scanned, int totalFiles);
     }
 }

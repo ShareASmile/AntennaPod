@@ -17,8 +17,9 @@ import androidx.media.AudioManagerCompat;
 import de.danoeh.antennapod.event.PlayerErrorEvent;
 import de.danoeh.antennapod.event.playback.BufferUpdateEvent;
 import de.danoeh.antennapod.event.playback.SpeedChangedEvent;
-import de.danoeh.antennapod.core.storage.DBReader;
 import de.danoeh.antennapod.core.util.playback.MediaPlayerError;
+import de.danoeh.antennapod.playback.base.PlaybackServiceMediaPlayer;
+import de.danoeh.antennapod.playback.base.PlayerStatus;
 import org.antennapod.audio.MediaPlayer;
 
 import java.io.File;
@@ -39,7 +40,7 @@ import de.danoeh.antennapod.model.playback.MediaType;
 import de.danoeh.antennapod.model.feed.VolumeAdaptionSetting;
 import de.danoeh.antennapod.core.feed.util.PlaybackSpeedUtils;
 import de.danoeh.antennapod.core.preferences.UserPreferences;
-import de.danoeh.antennapod.core.util.RewindAfterPauseUtils;
+import de.danoeh.antennapod.playback.base.RewindAfterPauseUtils;
 import de.danoeh.antennapod.core.util.playback.AudioPlayer;
 import de.danoeh.antennapod.core.util.playback.IPlayer;
 import de.danoeh.antennapod.model.playback.Playable;
@@ -148,7 +149,7 @@ public class LocalPSMP extends PlaybackServiceMediaPlayer {
     }
 
     public LocalPSMP(@NonNull Context context,
-                     @NonNull PSMPCallback callback) {
+                     @NonNull PlaybackServiceMediaPlayer.PSMPCallback callback) {
         super(context, callback);
         this.audioManager = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
         this.playerLock = new PlayerLock();
@@ -265,9 +266,7 @@ public class LocalPSMP extends PlaybackServiceMediaPlayer {
         LocalPSMP.this.startWhenPrepared.set(startWhenPrepared);
         setPlayerStatus(PlayerStatus.INITIALIZING, media);
         try {
-            if (media instanceof FeedMedia && ((FeedMedia) media).getItem() == null) {
-                ((FeedMedia) media).setItem(DBReader.getFeedItem(((FeedMedia) media).getItemId()));
-            }
+            callback.ensureMediaInfoLoaded(media);
             callback.onMediaChanged(false);
             setPlaybackParams(PlaybackSpeedUtils.getCurrentPlaybackSpeed(media), UserPreferences.isSkipSilence());
             if (stream) {
@@ -544,7 +543,7 @@ public class LocalPSMP extends PlaybackServiceMediaPlayer {
         executor.submit(() -> {
             playerLock.lock();
             int currentPosition = getPosition();
-            if (currentPosition != INVALID_TIME) {
+            if (currentPosition != Playable.INVALID_TIME) {
                 seekToSync(currentPosition + d);
             } else {
                 Log.e(TAG, "getPosition() returned INVALID_TIME in seekDelta");
@@ -560,10 +559,10 @@ public class LocalPSMP extends PlaybackServiceMediaPlayer {
     @Override
     public int getDuration() {
         if (!playerLock.tryLock()) {
-            return INVALID_TIME;
+            return Playable.INVALID_TIME;
         }
 
-        int retVal = INVALID_TIME;
+        int retVal = Playable.INVALID_TIME;
         if (playerStatus == PlayerStatus.PLAYING
                 || playerStatus == PlayerStatus.PAUSED
                 || playerStatus == PlayerStatus.PREPARED) {
@@ -584,13 +583,13 @@ public class LocalPSMP extends PlaybackServiceMediaPlayer {
     public int getPosition() {
         try {
             if (!playerLock.tryLock(50, TimeUnit.MILLISECONDS)) {
-                return INVALID_TIME;
+                return Playable.INVALID_TIME;
             }
         } catch (InterruptedException e) {
-            return INVALID_TIME;
+            return Playable.INVALID_TIME;
         }
 
-        int retVal = INVALID_TIME;
+        int retVal = Playable.INVALID_TIME;
         if (playerStatus.isAtLeast(PlayerStatus.PREPARED)) {
             retVal = mediaPlayer.getCurrentPosition();
         }
@@ -714,7 +713,6 @@ public class LocalPSMP extends PlaybackServiceMediaPlayer {
         return stream;
     }
 
-
     /**
      * Releases internally used resources. This method should only be called when the object is not used anymore.
      */
@@ -726,24 +724,17 @@ public class LocalPSMP extends PlaybackServiceMediaPlayer {
                 if (mediaPlayer.isPlaying()) {
                     mediaPlayer.stop();
                 }
-            } catch (Exception ignore) { }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
             mediaPlayer.release();
             mediaPlayer = null;
+            playerStatus = PlayerStatus.STOPPED;
         }
         isShutDown = true;
         executor.shutdown();
         abandonAudioFocus();
         releaseWifiLockIfNecessary();
-    }
-
-    /**
-     * Releases internally used resources. This method should only be called when the object is not used anymore.
-     * This method is executed on an internal executor service.
-     */
-    @Override
-    public void shutdownQuietly() {
-        executor.submit(this::shutdown);
-        executor.shutdown();
     }
 
     @Override
@@ -835,6 +826,7 @@ public class LocalPSMP extends PlaybackServiceMediaPlayer {
         }
         if (media == null) {
             mediaPlayer = null;
+            playerStatus = PlayerStatus.STOPPED;
             return;
         }
 
@@ -864,8 +856,6 @@ public class LocalPSMP extends PlaybackServiceMediaPlayer {
                 if (focusChange == AudioManager.AUDIOFOCUS_GAIN && pausedBecauseOfTransientAudiofocusLoss) {
                     pausedBecauseOfTransientAudiofocusLoss = false;
                     new PlaybackServiceStarter(context, getPlayable())
-                            .startWhenPrepared(true)
-                            .streamIfLastWasStream()
                             .callEvenIfRunning(false)
                             .start();
                 }
@@ -1098,7 +1088,7 @@ public class LocalPSMP extends PlaybackServiceMediaPlayer {
                 EventBus.getDefault().post(BufferUpdateEvent.ended());
                 return true;
             default:
-                return callback.onMediaPlayerInfo(what, 0);
+                return true;
         }
     }
 
@@ -1147,5 +1137,10 @@ public class LocalPSMP extends PlaybackServiceMediaPlayer {
         } else {
             executor.submit(r);
         }
+    }
+
+    @Override
+    public boolean isCasting() {
+        return false;
     }
 }

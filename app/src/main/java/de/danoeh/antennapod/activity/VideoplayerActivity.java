@@ -1,7 +1,6 @@
 package de.danoeh.antennapod.activity;
 
 import android.annotation.SuppressLint;
-import android.annotation.TargetApi;
 import android.content.Intent;
 import android.graphics.PixelFormat;
 import android.graphics.drawable.ColorDrawable;
@@ -31,11 +30,12 @@ import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.SeekBar;
 import androidx.annotation.Nullable;
-import androidx.appcompat.app.AlertDialog;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import androidx.core.view.WindowCompat;
 import androidx.interpolator.view.animation.FastOutSlowInInterpolator;
 import com.bumptech.glide.Glide;
 import de.danoeh.antennapod.R;
+import de.danoeh.antennapod.dialog.VariableSpeedDialog;
 import de.danoeh.antennapod.event.playback.BufferUpdateEvent;
 import de.danoeh.antennapod.event.playback.PlaybackPositionEvent;
 import de.danoeh.antennapod.event.PlayerErrorEvent;
@@ -43,14 +43,12 @@ import de.danoeh.antennapod.event.playback.PlaybackServiceEvent;
 import de.danoeh.antennapod.event.playback.SleepTimerUpdatedEvent;
 import de.danoeh.antennapod.core.preferences.UserPreferences;
 import de.danoeh.antennapod.core.service.playback.PlaybackService;
-import de.danoeh.antennapod.core.service.playback.PlayerStatus;
 import de.danoeh.antennapod.core.storage.DBReader;
 import de.danoeh.antennapod.core.storage.DBWriter;
 import de.danoeh.antennapod.core.util.Converter;
 import de.danoeh.antennapod.core.util.FeedItemUtil;
 import de.danoeh.antennapod.core.util.IntentUtils;
 import de.danoeh.antennapod.core.util.ShareUtils;
-import de.danoeh.antennapod.core.util.StorageUtils;
 import de.danoeh.antennapod.core.util.TimeSpeedConverter;
 import de.danoeh.antennapod.core.util.gui.PictureInPictureUtil;
 import de.danoeh.antennapod.core.util.playback.PlaybackController;
@@ -62,6 +60,8 @@ import de.danoeh.antennapod.dialog.SleepTimerDialog;
 import de.danoeh.antennapod.model.feed.FeedItem;
 import de.danoeh.antennapod.model.feed.FeedMedia;
 import de.danoeh.antennapod.model.playback.Playable;
+import de.danoeh.antennapod.playback.base.PlayerStatus;
+import de.danoeh.antennapod.playback.cast.CastEnabledActivity;
 import de.danoeh.antennapod.ui.appstartintent.MainActivityStarter;
 import io.reactivex.Observable;
 import io.reactivex.android.schedulers.AndroidSchedulers;
@@ -90,6 +90,7 @@ public class VideoplayerActivity extends CastEnabledActivity implements SeekBar.
     private PlaybackController controller;
     private boolean showTimeLeft = false;
     private boolean isFavorite = false;
+    private boolean switchToAudioOnly = false;
     private Disposable disposable;
     private float prog;
 
@@ -104,7 +105,6 @@ public class VideoplayerActivity extends CastEnabledActivity implements SeekBar.
         super.onCreate(savedInstanceState);
 
         Log.d(TAG, "onCreate()");
-        StorageUtils.checkStorageAvailability(this);
 
         getWindow().setFormat(PixelFormat.TRANSPARENT);
         viewBinding = VideoplayerActivityBinding.inflate(LayoutInflater.from(this));
@@ -117,7 +117,7 @@ public class VideoplayerActivity extends CastEnabledActivity implements SeekBar.
     @Override
     protected void onResume() {
         super.onResume();
-        StorageUtils.checkStorageAvailability(this);
+        switchToAudioOnly = false;
         if (PlaybackService.isCasting()) {
             Intent intent = PlaybackService.getPlayerActivityIntent(this);
             if (!intent.getComponent().getClassName().equals(VideoplayerActivity.class.getName())) {
@@ -148,8 +148,7 @@ public class VideoplayerActivity extends CastEnabledActivity implements SeekBar.
 
     @Override
     public void onUserLeaveHint() {
-        if (!PictureInPictureUtil.isInPictureInPictureMode(this) && UserPreferences.getVideoBackgroundBehavior()
-                == UserPreferences.VideoBackgroundBehavior.PICTURE_IN_PICTURE) {
+        if (!PictureInPictureUtil.isInPictureInPictureMode(this)) {
             compatEnterPictureInPicture();
         }
     }
@@ -174,7 +173,6 @@ public class VideoplayerActivity extends CastEnabledActivity implements SeekBar.
         super.onPause();
     }
 
-    @TargetApi(Build.VERSION_CODES.ICE_CREAM_SANDWICH)
     @Override
     public void onTrimMemory(int level) {
         super.onTrimMemory(level);
@@ -190,18 +188,18 @@ public class VideoplayerActivity extends CastEnabledActivity implements SeekBar.
     private PlaybackController newPlaybackController() {
         return new PlaybackController(this) {
             @Override
-            public void onPositionObserverUpdate() {
-                VideoplayerActivity.this.onPositionObserverUpdate();
-            }
-
-            @Override
-            public void onReloadNotification(int code) {
-                VideoplayerActivity.this.onReloadNotification(code);
-            }
-
-            @Override
             protected void updatePlayButtonShowsPlay(boolean showPlay) {
                 viewBinding.playButton.setIsShowPlay(showPlay);
+                if (showPlay) {
+                    getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                } else {
+                    getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+                    setupVideoAspectRatio();
+                    if (videoSurfaceCreated && controller != null) {
+                        Log.d(TAG, "Videosurface already created, setting videosurface now");
+                        controller.setVideoSurface(viewBinding.videoView.getHolder());
+                    }
+                }
             }
 
             @Override
@@ -210,26 +208,8 @@ public class VideoplayerActivity extends CastEnabledActivity implements SeekBar.
             }
 
             @Override
-            public void onAwaitingVideoSurface() {
-                setupVideoAspectRatio();
-                if (videoSurfaceCreated && controller != null) {
-                    Log.d(TAG, "Videosurface already created, setting videosurface now");
-                    controller.setVideoSurface(viewBinding.videoView.getHolder());
-                }
-            }
-
-            @Override
             public void onPlaybackEnd() {
                 finish();
-            }
-
-            @Override
-            protected void setScreenOn(boolean enable) {
-                if (enable) {
-                    getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-                } else {
-                    getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-                }
             }
         };
     }
@@ -257,6 +237,13 @@ public class VideoplayerActivity extends CastEnabledActivity implements SeekBar.
     protected void loadMediaInfo() {
         Log.d(TAG, "loadMediaInfo()");
         if (controller == null || controller.getMedia() == null) {
+            return;
+        }
+        if (controller.getStatus() == PlayerStatus.PLAYING && !controller.isPlayingVideoLocally()) {
+            Log.d(TAG, "Closing, no longer video");
+            destroyingDueToReload = true;
+            finish();
+            new MainActivityStarter(this).withOpenPlayer().start();
             return;
         }
         showTimeLeft = UserPreferences.shouldShowRemainingTime();
@@ -479,29 +466,11 @@ public class VideoplayerActivity extends CastEnabledActivity implements SeekBar.
         public void surfaceDestroyed(SurfaceHolder holder) {
             Log.d(TAG, "Videosurface was destroyed");
             videoSurfaceCreated = false;
-            if (controller != null && !destroyingDueToReload
-                    && UserPreferences.getVideoBackgroundBehavior()
-                    != UserPreferences.VideoBackgroundBehavior.CONTINUE_PLAYING) {
+            if (controller != null && !destroyingDueToReload && !switchToAudioOnly) {
                 controller.notifyVideoSurfaceAbandoned();
             }
         }
     };
-
-    protected void onReloadNotification(int notificationCode) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && PictureInPictureUtil.isInPictureInPictureMode(this)) {
-            if (notificationCode == PlaybackService.EXTRA_CODE_AUDIO
-                    || notificationCode == PlaybackService.EXTRA_CODE_CAST) {
-                finish();
-            }
-            return;
-        }
-        if (notificationCode == PlaybackService.EXTRA_CODE_CAST) {
-            Log.d(TAG, "ReloadNotification received, switching to Castplayer now");
-            destroyingDueToReload = true;
-            finish();
-            new MainActivityStarter(this).withOpenPlayer().start();
-        }
-    }
 
     private void showVideoControls() {
         viewBinding.bottomControlsContainer.setVisibility(View.VISIBLE);
@@ -545,7 +514,7 @@ public class VideoplayerActivity extends CastEnabledActivity implements SeekBar.
 
     @Subscribe(threadMode = ThreadMode.MAIN)
     public void onMediaPlayerError(PlayerErrorEvent event) {
-        final AlertDialog.Builder errorDialog = new AlertDialog.Builder(VideoplayerActivity.this);
+        final MaterialAlertDialogBuilder errorDialog = new MaterialAlertDialogBuilder(VideoplayerActivity.this);
         errorDialog.setTitle(R.string.error_label);
         errorDialog.setMessage(event.getMessage());
         errorDialog.setNeutralButton(android.R.string.ok, (dialog, which) -> finish());
@@ -589,17 +558,17 @@ public class VideoplayerActivity extends CastEnabledActivity implements SeekBar.
         menu.findItem(R.id.set_sleeptimer_item).setVisible(!controller.sleepTimerActive());
         menu.findItem(R.id.disable_sleeptimer_item).setVisible(controller.sleepTimerActive());
 
-        if (PictureInPictureUtil.supportsPictureInPicture(this)) {
-            menu.findItem(R.id.player_go_to_picture_in_picture).setVisible(true);
-        }
+        menu.findItem(R.id.player_switch_to_audio_only).setVisible(true);
         menu.findItem(R.id.audio_controls).setIcon(R.drawable.ic_sliders);
+        menu.findItem(R.id.playback_speed).setVisible(true);
         return true;
     }
 
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
-        if (item.getItemId() == R.id.player_go_to_picture_in_picture) {
-            compatEnterPictureInPicture();
+        if (item.getItemId() == R.id.player_switch_to_audio_only) {
+            switchToAudioOnly = true;
+            finish();
             return true;
         }
         if (item.getItemId() == android.R.id.home) {
@@ -641,6 +610,8 @@ public class VideoplayerActivity extends CastEnabledActivity implements SeekBar.
         } else if (item.getItemId() == R.id.share_item && feedItem != null) {
             ShareDialog shareDialog = ShareDialog.newInstance(feedItem);
             shareDialog.show(getSupportFragmentManager(), "ShareEpisodeDialog");
+        } else if (item.getItemId() == R.id.playback_speed) {
+            new VariableSpeedDialog().show(getSupportFragmentManager(), null);
         } else {
             return false;
         }
@@ -669,8 +640,8 @@ public class VideoplayerActivity extends CastEnabledActivity implements SeekBar.
         int remainingTime = converter.convert(
                 controller.getDuration() - controller.getPosition());
         Log.d(TAG, "currentPosition " + Converter.getDurationStringLong(currentPosition));
-        if (currentPosition == PlaybackService.INVALID_TIME
-                || duration == PlaybackService.INVALID_TIME) {
+        if (currentPosition == Playable.INVALID_TIME
+                || duration == Playable.INVALID_TIME) {
             Log.w(TAG, "Could not react to position observer update because of invalid time");
             return;
         }

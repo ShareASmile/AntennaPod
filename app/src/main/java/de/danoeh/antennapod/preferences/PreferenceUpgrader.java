@@ -5,7 +5,10 @@ import android.content.SharedPreferences;
 import android.view.KeyEvent;
 import androidx.preference.PreferenceManager;
 
+import java.util.concurrent.TimeUnit;
+
 import de.danoeh.antennapod.BuildConfig;
+import de.danoeh.antennapod.core.preferences.SleepTimerPreferences;
 import de.danoeh.antennapod.error.CrashReportWriter;
 import de.danoeh.antennapod.R;
 import de.danoeh.antennapod.core.preferences.UserPreferences;
@@ -39,9 +42,6 @@ public class PreferenceUpgrader {
     private static void upgrade(int oldVersion, Context context) {
         if (oldVersion == -1) {
             //New installation
-            if (UserPreferences.getUsageCountingDateMillis() < 0) {
-                UserPreferences.resetUsageCountingDate();
-            }
             return;
         }
         if (oldVersion < 1070196) {
@@ -93,9 +93,6 @@ public class PreferenceUpgrader {
                 UserPreferences.setEnqueueLocation(enqueueLocation);
             }
         }
-        if (oldVersion < 1080100) {
-            prefs.edit().putString(UserPreferences.PREF_VIDEO_BEHAVIOR, "pip").apply();
-        }
         if (oldVersion < 2010300) {
             // Migrate hardware button preferences
             if (prefs.getBoolean("prefHardwareForwardButtonSkips", false)) {
@@ -114,6 +111,21 @@ public class PreferenceUpgrader {
         }
         if (oldVersion < 2050000) {
             prefs.edit().putBoolean(UserPreferences.PREF_PAUSE_PLAYBACK_FOR_FOCUS_LOSS, true).apply();
+        }
+        if (oldVersion < 2080000) {
+            // Migrate drawer feed counter setting to reflect removal of
+            // "unplayed and in inbox" (0), by changing it to "unplayed" (2)
+            String feedCounterSetting = prefs.getString(UserPreferences.PREF_DRAWER_FEED_COUNTER, "1");
+            if (feedCounterSetting.equals("0")) {
+                prefs.edit().putString(UserPreferences.PREF_DRAWER_FEED_COUNTER, "2").apply();
+            }
+
+            SharedPreferences sleepTimerPreferences =
+                    context.getSharedPreferences(SleepTimerPreferences.PREF_NAME, Context.MODE_PRIVATE);
+            TimeUnit[] timeUnits = { TimeUnit.SECONDS, TimeUnit.MINUTES, TimeUnit.HOURS };
+            long value = Long.parseLong(SleepTimerPreferences.lastTimerValue());
+            TimeUnit unit = timeUnits[sleepTimerPreferences.getInt("LastTimeUnit", 1)];
+            SleepTimerPreferences.setLastTimer(String.valueOf(unit.toMinutes(value)));
         }
     }
 }

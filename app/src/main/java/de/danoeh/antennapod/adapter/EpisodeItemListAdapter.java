@@ -1,9 +1,12 @@
 package de.danoeh.antennapod.adapter;
 
 import android.app.Activity;
+import android.os.Build;
 import android.view.ContextMenu;
+import android.view.InputDevice;
 import android.view.MenuInflater;
 import android.view.MenuItem;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 
@@ -35,6 +38,7 @@ public class EpisodeItemListAdapter extends SelectableAdapter<EpisodeItemViewHol
     private List<FeedItem> episodes = new ArrayList<>();
     private FeedItem longPressedItem;
     int longPressedPosition = 0; // used to init actionMode
+    private int dummyViews = 0;
 
     public EpisodeItemListAdapter(MainActivity mainActivity) {
         super(mainActivity);
@@ -42,9 +46,14 @@ public class EpisodeItemListAdapter extends SelectableAdapter<EpisodeItemViewHol
         setHasStableIds(true);
     }
 
+    public void setDummyViews(int dummyViews) {
+        this.dummyViews = dummyViews;
+    }
+
     public void updateItems(List<FeedItem> items) {
         episodes = items;
         notifyDataSetChanged();
+        updateTitle();
     }
 
     @Override
@@ -60,6 +69,14 @@ public class EpisodeItemListAdapter extends SelectableAdapter<EpisodeItemViewHol
 
     @Override
     public final void onBindViewHolder(EpisodeItemViewHolder holder, int pos) {
+        if (pos >= episodes.size()) {
+            beforeBindViewHolder(holder, pos);
+            holder.bindDummy();
+            afterBindViewHolder(holder, pos);
+            holder.hideSeparatorIfNecessary();
+            return;
+        }
+
         // Reset state of recycled views
         holder.coverHolder.setVisibility(View.VISIBLE);
         holder.dragHandle.setVisibility(View.GONE);
@@ -81,8 +98,19 @@ public class EpisodeItemListAdapter extends SelectableAdapter<EpisodeItemViewHol
         });
         holder.itemView.setOnCreateContextMenuListener(this);
         holder.itemView.setOnLongClickListener(v -> {
-            longPressedItem = getItem(holder.getBindingAdapterPosition());
+            longPressedItem = item;
             longPressedPosition = holder.getBindingAdapterPosition();
+            return false;
+        });
+        holder.itemView.setOnTouchListener((v, e) -> {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                if (e.isFromSource(InputDevice.SOURCE_MOUSE)
+                        && e.getButtonState() == MotionEvent.BUTTON_SECONDARY) {
+                    longPressedItem = item;
+                    longPressedPosition = holder.getBindingAdapterPosition();
+                    return false;
+                }
+            }
             return false;
         });
 
@@ -113,6 +141,7 @@ public class EpisodeItemListAdapter extends SelectableAdapter<EpisodeItemViewHol
         holder.itemView.setOnClickListener(null);
         holder.itemView.setOnCreateContextMenuListener(null);
         holder.itemView.setOnLongClickListener(null);
+        holder.itemView.setOnTouchListener(null);
         holder.secondaryActionButton.setOnClickListener(null);
         holder.dragHandle.setOnTouchListener(null);
         holder.coverHolder.setOnTouchListener(null);
@@ -139,13 +168,16 @@ public class EpisodeItemListAdapter extends SelectableAdapter<EpisodeItemViewHol
 
     @Override
     public long getItemId(int position) {
+        if (position >= episodes.size()) {
+            return RecyclerView.NO_ID; // Dummy views
+        }
         FeedItem item = episodes.get(position);
         return item != null ? item.getId() : RecyclerView.NO_POSITION;
     }
 
     @Override
     public int getItemCount() {
-        return episodes.size();
+        return dummyViews + episodes.size();
     }
 
     protected FeedItem getItem(int index) {
@@ -162,6 +194,9 @@ public class EpisodeItemListAdapter extends SelectableAdapter<EpisodeItemViewHol
         if (inActionMode()) {
             inflater.inflate(R.menu.multi_select_context_popup, menu);
         } else {
+            if (longPressedItem == null) {
+                return;
+            }
             inflater.inflate(R.menu.feeditemlist_context, menu);
             menu.setHeaderTitle(longPressedItem.getTitle());
             FeedItemMenuHandler.onPrepareMenu(menu, longPressedItem, R.id.skip_episode_item);
@@ -176,6 +211,7 @@ public class EpisodeItemListAdapter extends SelectableAdapter<EpisodeItemViewHol
             setSelected(0, longPressedPosition, true);
             return true;
         } else if (item.getItemId() == R.id.select_all_below) {
+            shouldSelectLazyLoadedItems = true;
             setSelected(longPressedPosition + 1, getItemCount(), true);
             return true;
         }

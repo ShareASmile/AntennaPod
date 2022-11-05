@@ -5,6 +5,7 @@ import android.content.Context;
 import android.content.res.TypedArray;
 import android.os.Build;
 import androidx.appcompat.app.AlertDialog;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import androidx.core.content.ContextCompat;
 import android.text.Editable;
 import android.text.TextUtils;
@@ -29,7 +30,7 @@ import java.util.concurrent.TimeUnit;
 import de.danoeh.antennapod.R;
 import de.danoeh.antennapod.core.preferences.UserPreferences;
 import de.danoeh.antennapod.core.service.download.AntennapodHttpClient;
-import de.danoeh.antennapod.core.service.download.ProxyConfig;
+import de.danoeh.antennapod.model.download.ProxyConfig;
 import io.reactivex.Completable;
 import io.reactivex.android.schedulers.AndroidSchedulers;
 import io.reactivex.disposables.Disposable;
@@ -62,7 +63,7 @@ public class ProxyDialog {
         View content = View.inflate(context, R.layout.proxy_settings, null);
         spType = content.findViewById(R.id.spType);
 
-        dialog = new AlertDialog.Builder(context)
+        dialog = new MaterialAlertDialogBuilder(context)
                 .setTitle(R.string.pref_proxy_title)
                 .setView(content)
                 .setNegativeButton(R.string.cancel_label, null)
@@ -148,32 +149,26 @@ public class ProxyDialog {
     }
 
     private void setProxyConfig() {
-        String type = (String) spType.getSelectedItem();
-        ProxyConfig proxy;
-        if (Proxy.Type.valueOf(type) == Proxy.Type.DIRECT) {
-            proxy = ProxyConfig.direct();
-        } else {
-            String host = etHost.getText().toString();
-            String port = etPort.getText().toString();
-            String username = etUsername.getText().toString();
-            if (TextUtils.isEmpty(username)) {
-                username = null;
-            }
-            String password = etPassword.getText().toString();
-            if (TextUtils.isEmpty(password)) {
-                password = null;
-            }
-            int portValue = 0;
-            if (!TextUtils.isEmpty(port)) {
-                portValue = Integer.parseInt(port);
-            }
-            if (Proxy.Type.valueOf(type) == Proxy.Type.SOCKS) {
-                proxy = ProxyConfig.socks(host, portValue, username, password);
-            } else {
-                proxy = ProxyConfig.http(host, portValue, username, password);
-            }
+        final String type = (String) spType.getSelectedItem();
+        final Proxy.Type typeEnum = Proxy.Type.valueOf(type);
+        final String host = etHost.getText().toString();
+        final String port = etPort.getText().toString();
+
+        String username = etUsername.getText().toString();
+        if (TextUtils.isEmpty(username)) {
+            username = null;
         }
-        UserPreferences.setProxyConfig(proxy);
+        String password = etPassword.getText().toString();
+        if (TextUtils.isEmpty(password)) {
+            password = null;
+        }
+        int portValue = 0;
+        if (!TextUtils.isEmpty(port)) {
+            portValue = Integer.parseInt(port);
+        }
+        ProxyConfig config = new ProxyConfig(typeEnum, host, portValue, username, password);
+        UserPreferences.setProxyConfig(config);
+        AntennapodHttpClient.setProxyConfig(config);
     }
 
     private final TextWatcher requireTestOnChange = new TextWatcher() {

@@ -2,6 +2,7 @@ package de.danoeh.antennapod.core.glide;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
+import android.graphics.Bitmap;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
@@ -30,7 +31,8 @@ public class ApGlideModule extends AppGlideModule {
 
     @Override
     public void applyOptions(@NonNull Context context, @NonNull GlideBuilder builder) {
-        builder.setDefaultRequestOptions(new RequestOptions().format(DecodeFormat.PREFER_ARGB_8888));
+        builder.setDefaultRequestOptions(RequestOptions.formatOf(DecodeFormat.PREFER_ARGB_8888));
+        builder.setLogLevel(Log.WARN);
         @SuppressLint("UsableSpace")
         long spaceAvailable = context.getCacheDir().getUsableSpace();
         long imageCacheSize = (spaceAvailable > 2 * GIGABYTES) ? (250 * MEGABYTES) : (50 * MEGABYTES);
@@ -41,9 +43,11 @@ public class ApGlideModule extends AppGlideModule {
     @Override
     public void registerComponents(@NonNull Context context, @NonNull Glide glide, @NonNull Registry registry) {
         registry.replace(String.class, InputStream.class, new MetadataRetrieverLoader.Factory(context));
+        registry.append(String.class, InputStream.class, new GenerativePlaceholderImageModelLoader.Factory());
         registry.append(String.class, InputStream.class, new ApOkHttpUrlLoader.Factory());
         registry.append(String.class, InputStream.class, new NoHttpStringLoader.StreamFactory());
 
         registry.append(EmbeddedChapterImage.class, ByteBuffer.class, new ChapterImageModelLoader.Factory());
+        registry.register(Bitmap.class, PaletteBitmap.class, new PaletteBitmapTranscoder());
     }
 }

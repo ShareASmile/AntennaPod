@@ -20,7 +20,7 @@ import android.widget.Toast;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts.RequestPermission;
 import androidx.annotation.Nullable;
-import androidx.appcompat.app.AlertDialog;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import de.danoeh.antennapod.R;
@@ -28,8 +28,8 @@ import de.danoeh.antennapod.core.export.opml.OpmlElement;
 import de.danoeh.antennapod.core.export.opml.OpmlReader;
 import de.danoeh.antennapod.core.preferences.UserPreferences;
 
-import de.danoeh.antennapod.core.storage.DownloadRequestException;
-import de.danoeh.antennapod.core.storage.DownloadRequester;
+import de.danoeh.antennapod.core.service.download.DownloadService;
+import de.danoeh.antennapod.core.service.download.DownloadRequestCreator;
 import de.danoeh.antennapod.databinding.OpmlSelectionBinding;
 import de.danoeh.antennapod.model.feed.Feed;
 import io.reactivex.Completable;
@@ -51,7 +51,7 @@ import java.util.List;
 public class OpmlImportActivity extends AppCompatActivity {
     private static final String TAG = "OpmlImportBaseActivity";
     @Nullable private Uri uri;
-    OpmlSelectionBinding viewBinding;
+    private OpmlSelectionBinding viewBinding;
     private ArrayAdapter<String> listAdapter;
     private MenuItem selectAll;
     private MenuItem deselectAll;
@@ -89,7 +89,6 @@ public class OpmlImportActivity extends AppCompatActivity {
         viewBinding.butConfirm.setOnClickListener(v -> {
             viewBinding.progressBar.setVisibility(View.VISIBLE);
             Completable.fromAction(() -> {
-                DownloadRequester requester = DownloadRequester.getInstance();
                 SparseBooleanArray checked = viewBinding.feedlist.getCheckedItemPositions();
                 for (int i = 0; i < checked.size(); i++) {
                     if (!checked.valueAt(i)) {
@@ -97,11 +96,7 @@ public class OpmlImportActivity extends AppCompatActivity {
                     }
                     OpmlElement element = readElements.get(checked.keyAt(i));
                     Feed feed = new Feed(element.getXmlUrl(), null, element.getText());
-                    try {
-                        requester.downloadFeed(getApplicationContext(), feed);
-                    } catch (DownloadRequestException e) {
-                        e.printStackTrace();
-                    }
+                    DownloadService.download(this, false, DownloadRequestCreator.create(feed).build());
                 }
             })
                     .subscribeOn(Schedulers.io())
@@ -133,7 +128,7 @@ public class OpmlImportActivity extends AppCompatActivity {
 
     void importUri(@Nullable Uri uri) {
         if (uri == null) {
-            new AlertDialog.Builder(this)
+            new MaterialAlertDialogBuilder(this)
                     .setMessage(R.string.opml_import_error_no_file)
                     .setPositiveButton(android.R.string.ok, null)
                     .show();
@@ -207,7 +202,7 @@ public class OpmlImportActivity extends AppCompatActivity {
                 if (isGranted) {
                     startImport();
                 } else {
-                    new AlertDialog.Builder(this)
+                    new MaterialAlertDialogBuilder(this)
                             .setMessage(R.string.opml_import_ask_read_permission)
                             .setPositiveButton(android.R.string.ok, (dialog, which) ->
                                     requestPermission())
@@ -245,7 +240,7 @@ public class OpmlImportActivity extends AppCompatActivity {
                             viewBinding.feedlist.setAdapter(listAdapter);
                         }, e -> {
                             viewBinding.progressBar.setVisibility(View.GONE);
-                            AlertDialog.Builder alert = new AlertDialog.Builder(this);
+                            MaterialAlertDialogBuilder alert = new MaterialAlertDialogBuilder(this);
                             alert.setTitle(R.string.error_label);
                             alert.setMessage(getString(R.string.opml_reader_error) + e.getMessage());
                             alert.setNeutralButton(android.R.string.ok, (dialog, which) -> dialog.dismiss());

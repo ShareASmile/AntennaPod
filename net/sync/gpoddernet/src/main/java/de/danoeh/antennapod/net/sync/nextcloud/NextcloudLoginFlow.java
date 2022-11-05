@@ -46,7 +46,7 @@ public class NextcloudLoginFlow {
     public void start() {
         startDisposable = Observable.fromCallable(() -> {
             URL url = new URI(hostname.scheme, null, hostname.host, hostname.port,
-                    "/index.php/login/v2", null, null).toURL();
+                    hostname.subfolder + "/index.php/login/v2", null, null).toURL();
             JSONObject result = doRequest(url, "");
             String loginUrl = result.getString("login");
             this.token = result.getJSONObject("poll").getString("token");
@@ -68,14 +68,13 @@ public class NextcloudLoginFlow {
 
     private void poll() {
         pollDisposable = Observable.fromCallable(() -> doRequest(URI.create(endpoint).toURL(), "token=" + token))
-                .delay(1, TimeUnit.SECONDS)
-                .retry(60 * 10) // 10 minutes
+                .retryWhen(t -> t.delay(1, TimeUnit.SECONDS))
+                .timeout(5, TimeUnit.MINUTES)
                 .subscribeOn(Schedulers.io())
                 .observeOn(AndroidSchedulers.mainThread())
-                .subscribe(result -> {
-                    callback.onNextcloudAuthenticated(result.getString("server"),
-                            result.getString("loginName"), result.getString("appPassword"));
-                }, Throwable::printStackTrace);
+                .subscribe(result -> callback.onNextcloudAuthenticated(
+                        result.getString("server"), result.getString("loginName"), result.getString("appPassword")),
+                    error -> callback.onNextcloudAuthError(error.getLocalizedMessage()));
     }
 
     public void cancel() {
@@ -93,9 +92,13 @@ public class NextcloudLoginFlow {
         Request request = new Request.Builder().url(url).method("POST", requestBody).build();
         Response response = httpClient.newCall(request).execute();
         if (response.code() != 200) {
+            response.close();
             throw new IOException("Return code " + response.code());
         }
         ResponseBody body = response.body();
+        if (body == null) {
+            throw new IOException("Empty response");
+        }
         return new JSONObject(body.string());
     }
 

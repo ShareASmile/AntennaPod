@@ -1,50 +1,15 @@
 package de.danoeh.antennapod.core.util;
 
-import android.app.Activity;
-import android.os.Build;
 import android.os.StatFs;
-import android.util.Log;
+import de.danoeh.antennapod.core.preferences.UserPreferences;
 
 import java.io.File;
-
-import de.danoeh.antennapod.core.ClientConfig;
-import de.danoeh.antennapod.core.preferences.UserPreferences;
 
 /**
  * Utility functions for handling storage errors
  */
 public class StorageUtils {
     private StorageUtils(){}
-
-    private static final String TAG = "StorageUtils";
-
-    public static boolean storageAvailable() {
-        File dir = UserPreferences.getDataFolder(null);
-        if (dir != null) {
-            return dir.exists() && dir.canRead() && dir.canWrite();
-        } else {
-            Log.d(TAG, "Storage not available: data folder is null");
-            return false;
-        }
-    }
-
-    /**
-     * Checks if external storage is available. If external storage isn't
-     * available, the current activity is finsished an an error activity is
-     * launched.
-     *
-     * @param activity the activity which would be finished if no storage is
-     *                 available
-     * @return true if external storage is available
-     */
-    public static boolean checkStorageAvailability(Activity activity) {
-        boolean storageAvailable = storageAvailable();
-        if (!storageAvailable) {
-            activity.finish();
-            activity.startActivity(ClientConfig.applicationCallbacks.getStorageErrorActivity(activity));
-        }
-        return storageAvailable;
-    }
 
     /**
      * Get the number of free bytes that are available on the external storage.
@@ -63,29 +28,15 @@ public class StorageUtils {
      */
     public static long getFreeSpaceAvailable(String path) {
         StatFs stat = new StatFs(path);
-        long availableBlocks;
-        long blockSize;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
-            availableBlocks = stat.getAvailableBlocksLong();
-            blockSize = stat.getBlockSizeLong();
-        } else {
-            availableBlocks = stat.getAvailableBlocks();
-            blockSize = stat.getBlockSize();
-        }
+        long availableBlocks = stat.getAvailableBlocksLong();
+        long blockSize = stat.getBlockSizeLong();
         return availableBlocks * blockSize;
     }
 
     public static long getTotalSpaceAvailable(String path) {
         StatFs stat = new StatFs(path);
-        long blockCount;
-        long blockSize;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
-            blockCount = stat.getBlockCountLong();
-            blockSize = stat.getBlockSizeLong();
-        } else {
-            blockCount = stat.getBlockCount();
-            blockSize = stat.getBlockSize();
-        }
+        long blockCount = stat.getBlockCountLong();
+        long blockSize = stat.getBlockSizeLong();
         return blockCount * blockSize;
     }
 }

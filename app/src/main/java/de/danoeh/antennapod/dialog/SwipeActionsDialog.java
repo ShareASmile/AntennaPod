@@ -8,6 +8,7 @@ import android.view.LayoutInflater;
 import android.view.View;
 
 import androidx.appcompat.app.AlertDialog;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import androidx.appcompat.content.res.AppCompatResources;
 import androidx.core.graphics.drawable.DrawableCompat;
 import androidx.gridlayout.widget.GridLayout;
@@ -22,8 +23,10 @@ import de.danoeh.antennapod.databinding.SwipeactionsDialogBinding;
 import de.danoeh.antennapod.databinding.SwipeactionsPickerBinding;
 import de.danoeh.antennapod.databinding.SwipeactionsPickerItemBinding;
 import de.danoeh.antennapod.databinding.SwipeactionsRowBinding;
-import de.danoeh.antennapod.fragment.EpisodesFragment;
+import de.danoeh.antennapod.fragment.AllEpisodesFragment;
+import de.danoeh.antennapod.fragment.CompletedDownloadsFragment;
 import de.danoeh.antennapod.fragment.FeedItemlistFragment;
+import de.danoeh.antennapod.fragment.InboxFragment;
 import de.danoeh.antennapod.fragment.QueueFragment;
 import de.danoeh.antennapod.fragment.swipeactions.SwipeAction;
 import de.danoeh.antennapod.fragment.swipeactions.SwipeActions;
@@ -50,17 +53,23 @@ public class SwipeActionsDialog {
         leftAction = actions.left;
         rightAction = actions.right;
 
-        final AlertDialog.Builder builder = new AlertDialog.Builder(context);
+        final MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(context);
 
         keys = SwipeActions.swipeActions;
 
         String forFragment = "";
         switch (tag) {
-            /*case InboxFragment.TAG:
+            case InboxFragment.TAG:
                 forFragment = context.getString(R.string.inbox_label);
-                break;*/
-            case EpisodesFragment.TAG:
+                keys = Stream.of(keys).filter(a -> !a.getId().equals(SwipeAction.TOGGLE_PLAYED)
+                        && !a.getId().equals(SwipeAction.DELETE)).toList();
+                break;
+            case AllEpisodesFragment.TAG:
                 forFragment = context.getString(R.string.episodes_label);
+                break;
+            case CompletedDownloadsFragment.TAG:
+                forFragment = context.getString(R.string.downloads_label);
+                keys = Stream.of(keys).filter(a -> !a.getId().equals(SwipeAction.REMOVE_FROM_INBOX)).toList();
                 break;
             case FeedItemlistFragment.TAG:
                 forFragment = context.getString(R.string.feeds_label);
@@ -120,7 +129,7 @@ public class SwipeActionsDialog {
     }
 
     private void showPicker(SwipeactionsRowBinding view, int direction) {
-        AlertDialog.Builder builder = new AlertDialog.Builder(context);
+        MaterialAlertDialogBuilder builder = new MaterialAlertDialogBuilder(context);
         builder.setTitle(direction == LEFT ? R.string.swipe_left : R.string.swipe_right);
 
         SwipeactionsPickerBinding picker = SwipeactionsPickerBinding.inflate(LayoutInflater.from(context));
@@ -168,7 +177,7 @@ public class SwipeActionsDialog {
         view.container.setAlpha(0.3f);
         view.secondaryActionButton.secondaryActionButton.setVisibility(View.GONE);
         view.dragHandle.setVisibility(View.GONE);
-        view.statusUnread.setText("███");
+        view.statusInbox.setVisibility(View.GONE);
         view.txtvTitle.setText("███████");
         view.txtvPosition.setText("█████");
     }

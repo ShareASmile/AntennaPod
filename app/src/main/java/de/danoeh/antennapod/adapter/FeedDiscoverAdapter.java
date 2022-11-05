@@ -5,10 +5,12 @@ import android.view.ViewGroup;
 import android.widget.BaseAdapter;
 import android.widget.ImageView;
 import com.bumptech.glide.Glide;
+import com.bumptech.glide.load.resource.bitmap.FitCenter;
+import com.bumptech.glide.load.resource.bitmap.RoundedCorners;
 import com.bumptech.glide.request.RequestOptions;
 import de.danoeh.antennapod.R;
 import de.danoeh.antennapod.activity.MainActivity;
-import de.danoeh.antennapod.discovery.PodcastSearchResult;
+import de.danoeh.antennapod.net.discovery.PodcastSearchResult;
 
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
@@ -65,7 +67,8 @@ public class FeedDiscoverAdapter extends BaseAdapter {
                 .load(podcast.imageUrl)
                 .apply(new RequestOptions()
                         .placeholder(R.color.light_gray)
-                        .fitCenter()
+                        .transform(new FitCenter(), new RoundedCorners((int)
+                                (8 * mainActivityRef.get().getResources().getDisplayMetrics().density)))
                         .dontAnimate())
                 .into(holder.imageView);
 
